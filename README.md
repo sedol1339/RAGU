@@ -50,60 +50,72 @@ pip install graph_ragu[local]
 import asyncio
 
 from ragu.chunker import SimpleChunker
-from ragu.embedder import STEmbedder
-from ragu.graph import KnowledgeGraph, InMemoryGraphBuilder
-
+from ragu.common.global_parameters import Settings
+from ragu.embedder import OpenAIEmbedder
+from ragu.graph import KnowledgeGraph, BuilderSettings
 from ragu.llm import OpenAIClient
-
-from ragu.storage import Index
 from ragu.triplet import ArtifactsExtractorLLM
 from ragu.utils.ragu_utils import read_text_from_files
 
-LLM_MODEL_NAME = "..."
-LLM_BASE_URL = "..."
-LLM_API_KEY = "..."
+# Configuration
+LLM_MODEL_NAME = "openai/gpt-4o-mini"
+LLM_BASE_URL = "https://api.openai.com/v1"
+LLM_API_KEY = "your-api-key-here"
+
+EMBEDDER_MODEL_NAME = "text-embedding-3-large"
 
 
 async def main():
-    # Load .txt documents from folder
-    docs = read_text_from_files("/path/to/files")
+    # Configure working directory and language
+    Settings.storage_folder = "ragu_working_dir"
+    Settings.language = "english"  # or "russian"
 
-    # Choose chunker 
-    chunker = SimpleChunker(max_chunk_size=2048, overlap=0)
+    # Load documents from folder
+    docs = read_text_from_files("path/to/your/data")
 
-    # Import LLM client
+    # Initialize chunker
+    chunker = SimpleChunker(max_chunk_size=1000)
+
+    # Set up LLM client
     client = OpenAIClient(
-        LLM_MODEL_NAME,
-        LLM_BASE_URL,
-        LLM_API_KEY,
+        model_name=LLM_MODEL_NAME,
+        base_url=LLM_BASE_URL,
+        api_token=LLM_API_KEY,
         max_requests_per_second=1,
-        max_requests_per_minute=60
+        max_requests_per_minute=60,
+        cache_flush_every=10,
     )
 
-    # Set up artifacts extractor
+    # Set up artifact extractor
     artifact_extractor = ArtifactsExtractorLLM(
         client=client,
-        do_validation=True
+        do_validation=False
     )
 
-    # Initialize your embedder
-    embedder = STEmbedder(
-        "Alibaba-NLP/gte-multilingual-base",
-        trust_remote_code=True
-    )
-    # Set up graph storage and graph builder pipeline
-    pipeline = InMemoryGraphBuilder(client, chunker, artifact_extractor)
-    index = Index(
-        embedder,
-        graph_storage_kwargs={"clustering_params": {"max_cluster_size": 6}}
+    # Initialize embedder
+    embedder = OpenAIEmbedder(
+        model_name=EMBEDDER_MODEL_NAME,
+        base_url=LLM_BASE_URL,
+        api_token=LLM_API_KEY,
+        dim=3072,
+        max_requests_per_second=1,
+        max_requests_per_minute=60,
+        use_cache=True,
     )
 
-    # Build KG
+    # Configure builder settings
+    builder_settings = BuilderSettings(
+        use_llm_summarization=True,
+        vectorize_chunks=True,
+    )
+
+    # Build knowledge graph
     knowledge_graph = await KnowledgeGraph(
-        extraction_pipeline=pipeline,  # Pass pipeline
-        index=index,  # Pass storage
-        make_community_summary=True,  # Generate community summary if you want
-        language="russian",  # You can set preferred language
+        client=client,
+        embedder=embedder,
+        chunker=chunker,
+        artifact_extractor=artifact_extractor,
+        builder_settings=builder_settings,
     ).build_from_docs(docs)
 
 
@@ -111,25 +123,109 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+> If you run the code with a storage folder that already contains a knowledge graph, RAGU will automatically load the existing graph.
+
+
 ### Example of querying
 ```python
 from ragu.search_engine import LocalSearchEngine
+from ragu.search_engine.query_plan import QueryPlanEngine
 
+# Create a local search engine
 search_engine = LocalSearchEngine(
     client,
     knowledge_graph,
-    embedder
+    embedder,
+    tokenizer_model="gpt-4o-mini",
 )
 
-# Find relevant local context for the query
-print(await search_engine.a_search("Как переводится роман 'Ка́мо гряде́ши, Го́споди?'"))
+# Use QueryPlanEngine for advanced query planning
+query_engine = QueryPlanEngine(search_engine)
+result = await query_engine.a_query("What is the capital of France?")
+print(result)
 
-# Or just past the query ang get final answer
-print(await search_engine.a_query("Как переводится роман 'Ка́мо гряде́ши, Го́споди?'"))
+# Or directly query with the search engine
+answer = await search_engine.a_query("Who wrote Romeo and Juliet?")
+print(answer)
 
-# Output:
-# [DefaultResponseModel(response="Роман 'Ка́мо гряде́ши, Го́споди?' переводится как 'Куда Ты идёшь, Господи?'")]
-# :)
+# You can also use other search engines:
+
+# Global search (uses community summaries)
+from ragu.search_engine import GlobalSearchEngine
+
+global_search = GlobalSearchEngine(
+    client=client,
+    knowledge_graph=knowledge_graph,
+)
+result = await QueryPlanEngine(global_search).a_query("Your broad query here")
+
+# Naive search (vector-based RAG)
+from ragu.search_engine import NaiveSearchEngine
+
+naive_search = NaiveSearchEngine(
+    client=client,
+    knowledge_graph=knowledge_graph,
+    embedder=embedder,
+)
+result = await QueryPlanEngine(naive_search).a_query("Your query here")
+```
+
+---
+
+### Advanced Configuration
+
+#### Builder Settings
+
+Configure the knowledge graph building pipeline using `BuilderSettings`:
+
+```python
+from ragu.graph import BuilderSettings
+
+builder_settings = BuilderSettings(
+    use_llm_summarization=True,       # Enable LLM-based entity/relation summarization
+    use_clustering=False,             # Apply clustering before summarization. Use it if your text contains many similar entities.
+    build_only_vector_context=False,  # Skip graph extraction, only chunk embeddings
+    make_community_summary=True,      # Generate community summaries 
+    remove_isolated_nodes=True,       # Remove entities without relations
+    vectorize_chunks=True,            # Vectorize chunk for naive (vector) search
+    cluster_only_if_more_than=10000,  # Minimum entities before clustering kicks in
+    max_cluster_size=128,             # Maximum entities per cluster
+)
+
+# Pass to KnowledgeGraph
+knowledge_graph = await KnowledgeGraph(
+    client=client,
+    embedder=embedder,
+    chunker=chunker,
+    artifact_extractor=artifact_extractor,
+    builder_settings=builder_settings,
+).build_from_docs(docs)
+```
+
+#### Storage Configuration
+
+Customize storage backends and their parameters using `StorageArguments`:
+
+```python
+from ragu.storage import StorageArguments
+from ragu.storage.graph_storage_adapters.networkx_adapter import NetworkXStorage
+from ragu.storage.kv_storage_adapters.json_storage import JsonKVStorage
+from ragu.storage.vdb_storage_adapters.nano_vdb import NanoVectorDBStorage
+
+storage_args = StorageArguments(
+    # Graph clustering parameters
+    max_community_size=128,  # Max nodes per community
+    random_seed=42,          # Reproducible community detection
+)
+
+# Pass to KnowledgeGraph
+knowledge_graph = await KnowledgeGraph(
+    client=client,
+    embedder=embedder,
+    chunker=chunker,
+    artifact_extractor=artifact_extractor,
+    storage_arguments=storage_args,
+).build_from_docs(docs)
 ```
 
 ---
