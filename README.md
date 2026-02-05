@@ -299,32 +299,68 @@ The pipeline operates in several stages:
 
 ---
 
-### Prompt tuning
-How to know what's prompt in used
+### Prompt Customization
+
+All RAGU components that use LLMs inherit from `RaguGenerativeModule`, which provides methods to view and update prompts.
+
+#### Viewing Current Prompts
+
 ```python
+from ragu.search_engine import LocalSearchEngine
+
 search_engine = LocalSearchEngine(
     client,
     knowledge_graph,
     embedder
 )
 
-print(search_engine.get_prompts())
-#
-# {'local_search': PromptTemplate(template='\n**Goal**\nAnswer the query by summarizing relevant information from the context and, if necessary, well-known facts.\n\n**Instructions**\n1. If you do not know the correct answer, explicitly state that.\n2. Do not include unsupported information.\n\nQuery: {{ query }}\nContext: {{ context }}\n\nProvide the answer in the following language: {{ language }}\nReturn the result as valid JSON matching the provided schema.\n', schema=<class 'ragu.common.prompts.default_models.DefaultResponseModel'>, description='Prompt for generating a local context-based search response.')}
-#
+# Get all prompts used by the search engine
+all_prompts = search_engine.get_prompts()
+print(all_prompts)
+# Returns: {'local_search': RAGUInstruction(...)}
 
-# or, if you know prompt name
-print(search_engine.get_prompt("local_search")
+# Get a specific prompt
+local_search_prompt = search_engine.get_prompt("local_search")
+print(local_search_prompt.messages.to_str())
+# Shows the actual prompt content (all conversation as single text)
+
+print(local_search_prompt.pydantic_model)
+# Shows the response pydantic model 
 ```
 
-You can update prompt using .update_prompt method
+#### Updating Prompts
+
+You can customize prompts by creating a new `RAGUInstruction` with your own messages:
 
 ```python
-from ragu.common.prompts import PromptTemplate
+from textwrap import dedent
 
-search_engine.update_prompt("prompt_name", PromptTemplate(template=..., schema=...))
+from ragu.common.prompts.prompt_storage import RAGUInstruction
+from ragu.common.prompts.messages import ChatMessages, UserMessage, SystemMessage
+from ragu.common.prompts.default_models import DefaultResponseModel
+
+# Create custom prompt instruction
+custom_instruction = RAGUInstruction(
+    messages=ChatMessages.from_messages([
+        SystemMessage(content="You are a helpful assistant specialized in academic research."),
+        UserMessage(content=dedent(
+            """
+            Answer the following query using the provided context.
+            
+            Query: {{ query }}
+            Context: {{ context }}
+            
+            Language: {{ language }}
+            """
+        ))  # Can store any conversation
+    ]),
+    pydantic_model=DefaultResponseModel,  # Your pydantic model (optional)
+    description="Custom local search prompt with academic focus" # Optional
+)
+
+# Update the prompt
+search_engine.update_prompt("local_search", custom_instruction)
 ```
-
 ---
 
 ### Contributors
