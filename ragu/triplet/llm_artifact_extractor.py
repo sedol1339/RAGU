@@ -76,7 +76,7 @@ class ArtifactsExtractorLLM(BaseArtifactExtractor):
             entity_types=self.entity_types,
             relation_types=self.relation_types,
         )
-        print(extraction_conversations)
+
         result_list = await self.client.generate(
             conversations=extraction_conversations,
             response_model=extraction_instruction.pydantic_model,
