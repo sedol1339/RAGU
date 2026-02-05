@@ -33,6 +33,7 @@ from ragu.common.prompts.default_templates import (
     DEFAULT_RAGU_LM_RELATION_DESCRIPTION_PROMPT,
     DEFAULT_QUERY_DECOMPOSITION_PROMPT,
     DEFAULT_QUERY_REWRITE_PROMPT,
+    DEFAULT_RAGU_LM_SYSTEM_PROMPT,
 )
 from ragu.common.prompts.messages import (
     ChatMessages,
@@ -152,6 +153,7 @@ DEFAULT_PROMPT_TEMPLATES: dict[str, RAGUInstruction] = {
     "ragu_lm_entity_extraction": RAGUInstruction(
         messages=ChatMessages.from_messages(
             [
+                SystemMessage(content=DEFAULT_RAGU_LM_SYSTEM_PROMPT),
                 UserMessage(content=DEFAULT_RAGU_LM_ENTITY_EXTRACTION_PROMPT),
             ]
         ),
@@ -162,6 +164,7 @@ DEFAULT_PROMPT_TEMPLATES: dict[str, RAGUInstruction] = {
     "ragu_lm_entity_normalization": RAGUInstruction(
         messages=ChatMessages.from_messages(
             [
+                SystemMessage(content=DEFAULT_RAGU_LM_SYSTEM_PROMPT),
                 UserMessage(content=DEFAULT_RAGU_LM_ENTITY_NORMALIZATION_PROMPT),
             ]
         ),
@@ -172,6 +175,7 @@ DEFAULT_PROMPT_TEMPLATES: dict[str, RAGUInstruction] = {
     "ragu_lm_entity_description": RAGUInstruction(
         messages=ChatMessages.from_messages(
             [
+                SystemMessage(content=DEFAULT_RAGU_LM_SYSTEM_PROMPT),
                 UserMessage(content=DEFAULT_RAGU_LM_ENTITY_DESCRIPTION_PROMPT),
             ]
         ),
@@ -182,6 +186,7 @@ DEFAULT_PROMPT_TEMPLATES: dict[str, RAGUInstruction] = {
     "ragu_lm_relation_description": RAGUInstruction(
         messages=ChatMessages.from_messages(
             [
+                SystemMessage(content=DEFAULT_RAGU_LM_SYSTEM_PROMPT),
                 UserMessage(content=DEFAULT_RAGU_LM_RELATION_DESCRIPTION_PROMPT),
             ]
         ),

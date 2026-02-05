@@ -157,6 +157,8 @@ Texts to summarize:
 {{ content }}
 """
 
+DEFAULT_RAGU_LM_SYSTEM_PROMPT = "Вы - эксперт в области анализа текстов и извлечения семантической информации из них."
+
 DEFAULT_RAGU_LM_ENTITY_EXTRACTION_PROMPT = """
 Распознайте все именованные сущности в тексте и выпишите их список с новой строки.
 Текст: {{ text }}
