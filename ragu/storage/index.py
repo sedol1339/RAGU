@@ -1,6 +1,6 @@
 import asyncio
 import os
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from typing import (
     Any,
     Awaitable,
@@ -17,7 +17,6 @@ from ragu.common.global_parameters import DEFAULT_FILENAMES
 from ragu.common.global_parameters import Settings
 from ragu.common.logger import logger
 from ragu.embedder.base_embedder import BaseEmbedder
-from ragu.graph.graph_builder_pipeline import KnowledgeGraphBuilderSettings
 from ragu.graph.types import (
     Entity,
     Relation,
@@ -34,6 +33,60 @@ from ragu.storage.kv_storage_adapters.json_storage import JsonKVStorage
 from ragu.storage.vdb_storage_adapters.nano_vdb import NanoVectorDBStorage
 
 
+@dataclass
+class StorageArguments:
+    """
+    Configuration for Index storage backends.
+
+    This dataclass consolidates all storage-related configuration in one place,
+    making it easy to customize storage backends and their initialization parameters
+    without understanding Index internals.
+
+    Attributes
+    ----------
+    graph_backend_storage : Type[BaseGraphStorage], default=NetworkXStorage
+        Storage backend class for graph structure (nodes/edges).
+        Must implement BaseGraphStorage interface.
+    kv_storage_type : Type[BaseKVStorage], default=JsonKVStorage
+        Storage backend class for key-value data (chunks, communities, summaries).
+        Must implement BaseKVStorage interface.
+    vdb_storage_type : Type[BaseVectorStorage], default=NanoVectorDBStorage
+        Storage backend class for vector embeddings (entities, relations, chunks).
+        Must implement BaseVectorStorage interface.
+    chunks_kv_storage_kwargs : Dict, default={}
+        Additional kwargs passed to KV storage for text chunks.
+        Common keys: 'filename' (auto-set if omitted), custom serialization options.
+    summary_kv_storage_kwargs : Dict, default={}
+        Additional kwargs passed to KV storage for community summaries.
+    communities_kv_storage_kwargs : Dict, default={}
+        Additional kwargs passed to KV storage for community metadata.
+        Used to store community structure (level, cluster_id, entity/relation IDs).
+    vdb_storage_kwargs : Dict, default={}
+        Additional kwargs passed to vector database instances.
+        Shared across entity, relation, and chunk vector stores.
+    graph_storage_kwargs : Dict, default={}
+        Additional kwargs passed to graph backend storage.
+    max_community_size : int, default=128
+        Maximum number of nodes per community during clustering.
+        Controls granularity of community detection. Smaller values create smaller communities.
+    random_seed : int, default=42
+        Random seed for reproducible community detection.
+        Ensures consistent clustering results across runs.
+    """
+    graph_backend_storage: Type[BaseGraphStorage] = NetworkXStorage
+    kv_storage_type: Type[BaseKVStorage] = JsonKVStorage
+    vdb_storage_type: Type[BaseVectorStorage] = NanoVectorDBStorage
+
+    chunks_kv_storage_kwargs: Dict = field(default_factory=dict)
+    summary_kv_storage_kwargs: Dict = field(default_factory=dict)
+    communities_kv_storage_kwargs: Dict = field(default_factory=dict)
+    vdb_storage_kwargs: Dict = field(default_factory=dict)
+    graph_storage_kwargs: Dict = field(default_factory=dict)
+
+    max_community_size: int = 128
+    random_seed: int = 42
+
+
 class Index:
     """
     Index class that manages all storage operations for a knowledge graph.
@@ -46,80 +99,70 @@ class Index:
     def __init__(
             self,
             embedder: BaseEmbedder,
-            builder_parameters: KnowledgeGraphBuilderSettings = KnowledgeGraphBuilderSettings,
-            graph_backend_storage: Type[BaseGraphStorage] = NetworkXStorage,
-            kv_storage_type: Type[BaseKVStorage] = JsonKVStorage,
-            vdb_storage_type: Type[BaseVectorStorage] = NanoVectorDBStorage,
-            chunks_kv_storage_kwargs: Optional[Dict] = None,
-            summary_kv_storage_kwargs: Optional[Dict] = None,
-            communities_kv_storage_kwargs: Optional[Dict] = None,
-            vdb_storage_kwargs: Optional[Dict] = None,
-            graph_storage_kwargs: Optional[Dict] = None,
+            arguments: StorageArguments,
     ):
         """
         Initializes the Index.
         """
-        # Initialize storage folder if it doesn't exist
+
         Settings.init_storage_folder()
         storage_folder: str = Settings.storage_folder
-
-        self.builder_parameters = builder_parameters
 
         self.embedder = embedder
         self.summary_kv_storage_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["community_summary_kv_storage_name"],
-            summary_kv_storage_kwargs,
+            arguments.summary_kv_storage_kwargs,
         )
         self.community_kv_storage_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["community_kv_storage_name"],
-            communities_kv_storage_kwargs,
+            arguments.communities_kv_storage_kwargs,
         )
         self.chunks_kv_storage_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["chunks_kv_storage_name"],
-            chunks_kv_storage_kwargs,
+            arguments.chunks_kv_storage_kwargs,
         )
         self.vdb_storage_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["entity_vdb_name"],
-            vdb_storage_kwargs,
+            arguments.vdb_storage_kwargs,
         )
         relation_vdb_storage_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["relation_vdb_name"],
-            vdb_storage_kwargs,
+            arguments.vdb_storage_kwargs,
         )
         chunk_vdb_storage_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["chunk_vdb_name"],
-            vdb_storage_kwargs,
+            arguments.vdb_storage_kwargs,
         )
         self.graph_storage_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["knowledge_graph_storage_name"],
-            graph_storage_kwargs,
+            arguments.graph_storage_kwargs,
         )
 
         # Key-value storages
-        self.chunks_kv_storage = kv_storage_type(**self.chunks_kv_storage_kwargs)  # type: ignore
+        self.chunks_kv_storage = arguments.kv_storage_type(**self.chunks_kv_storage_kwargs)
 
-        self.community_summary_kv_storage = kv_storage_type(**self.summary_kv_storage_kwargs)  # type: ignore
+        self.community_summary_kv_storage = arguments.kv_storage_type(**self.summary_kv_storage_kwargs)
         self.communities_kv_storage = self.community_summary_kv_storage
 
-        self.community_kv_storage = kv_storage_type(**self.community_kv_storage_kwargs)  # type: ignore
+        self.community_kv_storage = arguments.kv_storage_type(**self.community_kv_storage_kwargs)
 
         # Vector storage
-        self.entity_vector_db = vdb_storage_type(embedder=embedder, **self.vdb_storage_kwargs)  # type: ignore
-        self.relation_vector_db = vdb_storage_type(embedder=embedder, **relation_vdb_storage_kwargs)  # type: ignore
-        self.chunk_vector_db = vdb_storage_type(embedder=embedder, **chunk_vdb_storage_kwargs)  # type: ignore
+        self.entity_vector_db = arguments.vdb_storage_type(embedder=embedder, **self.vdb_storage_kwargs)
+        self.relation_vector_db = arguments.vdb_storage_type(embedder=embedder, **relation_vdb_storage_kwargs)
+        self.chunk_vector_db = arguments.vdb_storage_type(embedder=embedder, **chunk_vdb_storage_kwargs)
 
         # Graph storage
-        self.graph_backend = graph_backend_storage(
-            max_cluster_size=builder_parameters.max_cluster_size,   # type: ignore
-            random_seed=builder_parameters.random_seed,             # type: ignore
-            **self.graph_storage_kwargs                             # type: ignore
+        self.graph_backend = arguments.graph_backend_storage(
+            max_cluster_size=arguments.max_community_size,
+            random_seed=arguments.random_seed,
+            **self.graph_storage_kwargs
         )
 
     async def make_index(

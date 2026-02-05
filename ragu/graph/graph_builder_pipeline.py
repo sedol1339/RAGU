@@ -13,7 +13,7 @@ from ragu.triplet.base_artifact_extractor import BaseArtifactExtractor
 
 
 @dataclass
-class KnowledgeGraphBuilderSettings:
+class BuilderSettings:
     """
     Configuration settings for the knowledge graph building pipeline.
 
@@ -59,7 +59,7 @@ class GraphBuilderModule:
     """
     Abstract interface for modules that extend the graph-building pipeline.
 
-    Each module receives batches of entities and relations
+    Each module receives entities and relations
     and can modify, enrich, or filter them before insertion into the graph.
 
     Typically used for:
@@ -70,19 +70,22 @@ class GraphBuilderModule:
     Methods
     -------
     run(entities, relations, **kwargs)
-        Perform batch update or enrichment on provided entities and relations.
+        Perform some operation on graph items.
     """
 
-    def run(
-        self, entities: List[Entity] | None, relations: List[Relation] | None, **kwargs
-    ) -> Any:
+    async def run(
+            self,
+            entities: List[Entity] | None,
+            relations: List[Relation] | None,
+            **kwargs
+    ) -> Tuple[List[Entity], List[Relation]]:
         """
         Process or update multiple nodes and edges during graph construction.
 
         :param entities: list of :class:`Entity` objects to insert or modify.
         :param relations: list of :class:`Relation` objects to insert or modify.
         :param kwargs: optional additional parameters specific to the module.
-        :return: updated or enriched entities/relations or any auxiliary result.
+        :return: updated or enriched entities/relations.
         """
         ...
 
@@ -137,7 +140,7 @@ class InMemoryGraphBuilder:
         client: BaseLLM = None,
         chunker: BaseChunker = None,
         artifact_extractor: BaseArtifactExtractor = None,
-        build_parameters: KnowledgeGraphBuilderSettings = KnowledgeGraphBuilderSettings(),
+        build_parameters: BuilderSettings = BuilderSettings(),
         embedder: BaseEmbedder = None,
         llm_cache_flush_every: int = 100,
         embedder_cache_flush_every: int = 100,
@@ -205,6 +208,11 @@ class InMemoryGraphBuilder:
         # Step 3: summarize similar artifacts' descriptions
         entities = await self.entity_summarizer.run(entities)
         relations = await self.relation_summarizer.run(relations)
+
+        # Step 4: use additional modules
+        if self.additional_pipeline:
+            for additional_module in self.additional_pipeline:
+               entities, relations = await additional_module.run(entities, relations)
 
         return entities, relations, chunks
 

@@ -1,48 +1,82 @@
 import asyncio
-from typing import List
+from typing import List, Optional
 
+from ragu.chunker import BaseChunker
 from ragu.common.global_parameters import Settings
-from ragu.common.logger import logger
-from ragu.graph.graph_builder_pipeline import InMemoryGraphBuilder
+from ragu.embedder.base_embedder import BaseEmbedder
+from ragu.graph.graph_builder_pipeline import (
+    InMemoryGraphBuilder,
+    BuilderSettings,
+    GraphBuilderModule
+)
 from ragu.graph.types import Entity, Relation, CommunitySummary
-from ragu.storage.index import Index
+from ragu.llm.base_llm import BaseLLM
+from ragu.storage import StorageArguments
+from ragu.storage.index import Index, StorageArguments as StorageArgumentsClass
+from ragu.triplet.base_artifact_extractor import BaseArtifactExtractor
 
 
-# TODO: add all "atomic" operation (CRUD for artifacts)
 class KnowledgeGraph:
     """
     High-level facade for knowledge graph operations.
-
-    Handles graph construction, entity/relation merging logic, and
-    delegates all CRUD operations to the Index class.
     """
 
     def __init__(
-            self,
-            extraction_pipeline: InMemoryGraphBuilder,
-            index: Index,
-            language: str | None = None,
+        self,
+        client: BaseLLM,
+        embedder: BaseEmbedder,
+        chunker: Optional[BaseChunker] = None,
+        artifact_extractor: Optional[BaseArtifactExtractor] = None,
+        builder_settings: Optional[BuilderSettings] = None,
+        storage_settings: Optional[StorageArguments] = None,
+        additional_modules: Optional[List[GraphBuilderModule]] = None,
+        language: Optional[str] = None,
     ):
-        self.index = index
-        self.pipeline = extraction_pipeline
+        """
+        Initialize KnowledgeGraph with components and settings.
 
-        self.build_params = extraction_pipeline.build_parameters
+        Parameters
+        ----------
+        client : BaseLLM
+            LLM client
+        embedder : BaseEmbedder
+            Embedding model for vectorization
+        chunker : BaseChunker, optional
+            Text chunker. Could be None if knowledge graph will be used just for inference.
+        artifact_extractor : BaseArtifactExtractor, optional
+            Entity/relation extraction pipeline. Could be None if knowledge graph will be used just for inference.
+        builder_settings : KnowledgeGraphBuilderSettings, optional
+            Configuration for graph building. Defaults to KnowledgeGraphBuilderSettings().
+        storage_settings : StorageArguments, optional
+            Configuration for storage backends. Defaults to StorageArguments().
+        additional_modules : list of GraphBuilderModule, optional
+            Custom post-processing modules
+        language : str, optional
+            Working language. Defaults to Settings.language
+        """
 
-        self.make_community_summary = self.build_params.make_community_summary
-        self.remove_isolated_nodes = self.build_params.remove_isolated_nodes
-        self.vectorize_chunks = self.build_params.vectorize_chunks
+        self.builder_settings = builder_settings or BuilderSettings()
+        self.storage_settings = storage_settings or StorageArgumentsClass()
+        self.language = language or Settings.language
 
-        self.language = language if language else Settings.language
+        self.pipeline = InMemoryGraphBuilder(
+            client=client,
+            chunker=chunker,
+            artifact_extractor=artifact_extractor,
+            build_parameters=self.builder_settings,
+            embedder=embedder,
+            additional_pipeline=additional_modules,
+            language=self.language,
+        )
 
-        if self.language != self.language:
-            logger.warning(
-                f"Override language from {self.pipeline.language} to {self.language}"
-            )
-            for o in self.pipeline.__dict__.values():
-                if hasattr(o, "language"):
-                    o.language = self.language
+        self.index = Index(
+            embedder=embedder,
+            arguments=self.storage_settings,
+        )
 
-        Settings.init_storage_folder()
+        self.make_community_summary = self.builder_settings.make_community_summary
+        self.remove_isolated_nodes = self.builder_settings.remove_isolated_nodes
+        self.vectorize_chunks = self.builder_settings.vectorize_chunks
 
     async def build_from_docs(self, docs: List[str]) -> "KnowledgeGraph":
         """
@@ -145,6 +179,7 @@ class KnowledgeGraph:
                     subject_name=relation_to_merge.subject_name,
                     object_name=relation_to_merge.object_name,
                     description=merged_description,
+                    relation_type=relation_to_merge.relation_type,
                     relation_strength=sum([relation_to_merge.relation_strength, relation.relation_strength]) * 0.5,
                     source_chunk_id=list(set(relation_to_merge.source_chunk_id + relation.source_chunk_id)),
                 )
@@ -161,6 +196,7 @@ class KnowledgeGraph:
 
     async def delete_relation(self, subject_id, object_id) -> "KnowledgeGraph":
         await self.index.graph_backend.delete_edge(subject_id, object_id)
+        return self
 
     async def update_relation(self, relation_id, new_relation) -> "KnowledgeGraph":
         ...
