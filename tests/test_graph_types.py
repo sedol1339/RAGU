@@ -99,6 +99,7 @@ class TestRelation:
             object_id="ent-2",
             subject_name="Alice",
             object_name="Bob",
+            relation_type="KNOWS",
             description="Alice knows Bob"
         )
 
@@ -106,6 +107,7 @@ class TestRelation:
         assert relation.object_id == "ent-2"
         assert relation.subject_name == "Alice"
         assert relation.object_name == "Bob"
+        assert relation.relation_type == "KNOWS"
         assert relation.description == "Alice knows Bob"
 
     def test_relation_id_generation(self):
@@ -114,6 +116,7 @@ class TestRelation:
             object_id="ent-2",
             subject_name="Subject",
             object_name="Object",
+            relation_type="RELATED_TO",
             description="Description"
         )
 
@@ -127,6 +130,7 @@ class TestRelation:
             object_id="ent-2",
             subject_name="A",
             object_name="B",
+            relation_type="RELATED_TO",
             description="Desc1"
         )
 
@@ -135,6 +139,7 @@ class TestRelation:
             object_id="ent-2",
             subject_name="A",
             object_name="B",
+            relation_type="RELATED_TO",
             description="Desc2"
         )
 
@@ -146,6 +151,7 @@ class TestRelation:
             object_id="ent-2",
             subject_name="A",
             object_name="B",
+            relation_type="RELATED_TO",
             description="Desc"
         )
 
@@ -154,6 +160,7 @@ class TestRelation:
             object_id="ent-3",
             subject_name="A",
             object_name="C",
+            relation_type="RELATED_TO",
             description="Desc"
         )
 
@@ -165,6 +172,7 @@ class TestRelation:
             object_id="ent-2",
             subject_name="A",
             object_name="B",
+            relation_type="RELATED_TO",
             description="Desc"
         )
 
@@ -176,6 +184,7 @@ class TestRelation:
             object_id="ent-2",
             subject_name="A",
             object_name="B",
+            relation_type="RELATED_TO",
             description="A -> B"
         )
 
@@ -184,6 +193,7 @@ class TestRelation:
             object_id="ent-1",
             subject_name="B",
             object_name="A",
+            relation_type="RELATED_TO",
             description="B -> A"
         )
 
@@ -199,7 +209,7 @@ class TestCommunity:
         ]
 
         relations = [
-            Relation("ent-1", "ent-2", "E1", "E2", "E1->E2")
+            Relation("ent-1", "ent-2", "E1", "E2", "RELATED_TO", "E1->E2")
         ]
 
         community = Community(
@@ -319,6 +329,7 @@ class TestDataclassInteractions:
             object_id=entity2.id,
             subject_name="Alice",
             object_name="Bob",
+            relation_type="KNOWS",
             description="Alice knows Bob"
         )
 
