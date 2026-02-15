@@ -69,10 +69,8 @@ class GlobalSearchEngine(BaseEngine, RaguGenerativeModule):
         :return: Concatenated responses from the top-rated communities.
         """
 
-        communities = await asyncio.gather(*[
-            self.knowledge_graph.index.community_summary_kv_storage.get_by_id(community_cluster_id)
-            for community_cluster_id in await self.knowledge_graph.index.communities_kv_storage.all_keys()
-        ])
+        communities_ids = await self.knowledge_graph.index.community_summary_kv_storage.all_keys()
+        communities = await self.knowledge_graph.index.community_summary_kv_storage.get_by_ids(communities_ids)
         communities = [c for c in communities if c is not None]
 
         responses = await self.get_meta_responses(query, communities)
