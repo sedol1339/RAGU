@@ -28,11 +28,7 @@ def _entity_to_attrs(e: Entity) -> Dict[str, Any]:
 
 class NetworkXStorage(BaseGraphStorage):
     """
-    NetworkX-based implementation of :class:`BaseGraphStorage`.
-
-    This class provides a lightweight, file-backed storage interface for
-    entities and relations using NetworkX as the underlying graph structure.
-    Supports node/edge CRUD operations and persistence.
+    NetworkX-based implementation of BaseGraphStorage.
     """
 
     def __init__(
@@ -41,7 +37,7 @@ class NetworkXStorage(BaseGraphStorage):
         **kwargs,
     ):
         """
-        Initialize a new :class:`NetworkXStorage`.
+        Initialize a new NetworkXStorage.
 
         :param filename: Path to a `.gml` file used for persistence.
         """
@@ -122,6 +118,9 @@ class NetworkXStorage(BaseGraphStorage):
 
         For each edge spec, returns ``degree(subject_id) + degree(object_id)``.
         Returns ``0`` when the relation or either endpoint is missing.
+
+        :param edge_specs: Edge specifications to evaluate.
+        :return: Degree sums aligned with ``edge_specs``.
         """
         degrees: List[int] = []
         for subject_id, object_id, relation_id in edge_specs:
@@ -137,7 +136,6 @@ class NetworkXStorage(BaseGraphStorage):
         Insert or update multiple nodes in the graph.
 
         :param nodes: Iterable of entities to process.
-        :type nodes: Iterable[Entity]
         """
         for node in nodes:
 
@@ -149,9 +147,7 @@ class NetworkXStorage(BaseGraphStorage):
         Retrieve multiple nodes by their IDs.
 
         :param node_ids: List of node identifiers to fetch.
-        :type node_ids: List[str]
         :return: List of entities (``None`` for missing nodes).
-        :rtype: List[Optional[Entity]]
         """
         results: List[Optional[Entity]] = []
         for node_id in node_ids:
@@ -169,7 +165,6 @@ class NetworkXStorage(BaseGraphStorage):
         Cascade removes all connected edges.
 
         :param node_ids: List of node identifiers to remove.
-        :type node_ids: List[str]
         """
         for node_id in node_ids:
             if self._graph.has_node(node_id):
@@ -180,9 +175,7 @@ class NetworkXStorage(BaseGraphStorage):
         Retrieve multiple edges by specs.
 
         :param edge_specs: List of edge specs ``(subject_id, object_id, relation_id)``.
-        :type edge_specs: List[EdgeSpec]
         :return: List of relations (``None`` for missing edges).
-        :rtype: List[Optional[Relation]]
         """
         results: List[Optional[Relation]] = []
         for spec in edge_specs:
@@ -213,7 +206,6 @@ class NetworkXStorage(BaseGraphStorage):
         Insert or update multiple edges in the graph.
 
         :param edges: List of relations to upsert.
-        :type edges: List[Relation]
         """
         for edge in edges:
             edge_data = asdict(edge)
@@ -227,7 +219,6 @@ class NetworkXStorage(BaseGraphStorage):
         Delete multiple edges from the graph.
 
         :param edge_specs: List of edge specs (subject_id, object_id, relation_id).
-        :type edge_specs: List[EdgeSpec]
         """
         for spec in edge_specs:
             u, v, key = spec
@@ -252,9 +243,7 @@ class NetworkXStorage(BaseGraphStorage):
         is performed.
 
         :param node_ids: List of node identifiers.
-        :type node_ids: List[str]
         :return: Grouped relations for each node.
-        :rtype: List[List[Relation]]
         """
         grouped_relations: List[List[Relation]] = []
 
@@ -279,7 +268,6 @@ class NetworkXStorage(BaseGraphStorage):
         Retrieve all nodes in the graph.
 
         :return: List of all entities.
-        :rtype: List[Entity]
         """
         entities: List[Entity] = []
         for node_id in self._graph.nodes():
@@ -292,7 +280,6 @@ class NetworkXStorage(BaseGraphStorage):
         Retrieve all edges in the graph.
 
         :return: List of all relations.
-        :rtype: List[Relation]
         """
         relations: List[Relation] = []
 
