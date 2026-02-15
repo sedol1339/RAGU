@@ -1,6 +1,6 @@
 from dataclasses import asdict
 from itertools import chain
-from typing import List, Any
+from typing import List, Any, Optional
 
 import pandas as pd
 from sklearn.cluster import DBSCAN
@@ -20,13 +20,13 @@ from ragu.common.prompts.messages import ChatMessages, render
 class EntitySummarizer(RaguGenerativeModule):
     def __init__(
         self,
-        client: BaseLLM = None,
+        client: Optional[BaseLLM] = None,
         use_llm_summarization: bool = True,
         use_clustering: bool = False,
-        embedder: BaseEmbedder = None,
+        embedder: Optional[BaseEmbedder] = None,
         cluster_only_if_more_than: int = 128,
         summarize_only_if_more_than: int = 5,
-        language: str | None = None,
+        language: Optional[str] = None,
     ):
         _PROMPTS = ["entity_summarizer", "cluster_summarize"]
         super().__init__(prompts=_PROMPTS)
