@@ -1,5 +1,7 @@
-# RAGU:  Retrieval-Augmented Graph Utility
 
+<h1 align="center">RAGU: Retrieval-Augmented Graph Utility</h1>
+
+---
 <h4 align="center">
   <a href="https://github.com/AsphodelRem/RAGU/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="RAGU is under the MIT license." alt="RAGU"/>
@@ -11,6 +13,12 @@
   <a href="#install">Install</a> |
   <a href="#quickstart">Quickstart</a> 
 </h4>
+
+<p align="center">
+<img src="assets/ragu_image.jpg" alt="RAGU logo" width="600" />
+</p>
+
+---
 
 
 ## Overview
@@ -49,15 +57,19 @@ pip install graph_ragu[local]
 ```python
 import asyncio
 
-from ragu.chunker import SimpleChunker
-from ragu.common.global_parameters import Settings
-from ragu.embedder import OpenAIEmbedder
-from ragu.graph import KnowledgeGraph, BuilderSettings
+from ragu import (
+    SimpleChunker,
+    KnowledgeGraph,
+    BuilderArguments,
+    Settings,
+    ArtifactsExtractorLLM,
+)
 from ragu.llm import OpenAIClient
-from ragu.triplet import ArtifactsExtractorLLM
+from ragu.embedder import OpenAIEmbedder
+
 from ragu.utils.ragu_utils import read_text_from_files
 
-# Configuration
+# Configuration (or use ragu.Env for loading from .env)
 LLM_MODEL_NAME = "openai/gpt-4o-mini"
 LLM_BASE_URL = "https://api.openai.com/v1"
 LLM_API_KEY = "your-api-key-here"
@@ -127,47 +139,65 @@ if __name__ == "__main__":
 
 
 ### Example of querying
-```python
-from ragu.search_engine import LocalSearchEngine
-from ragu.search_engine.query_plan import QueryPlanEngine
 
-# Create a local search engine
-search_engine = LocalSearchEngine(
+**Local search**
+Search over entities retrieved for the query and their connected context (relations, summaries, and chunks).
+```python
+from ragu import LocalSearchEngine
+
+local_search = LocalSearchEngine(
     client,
     knowledge_graph,
     embedder,
     tokenizer_model="gpt-4o-mini",
 )
+local_answer = await local_search.a_query("Who wrote Romeo and Juliet?")
+print(local_answer)
+```
 
-# Use QueryPlanEngine for advanced query planning
-query_engine = QueryPlanEngine(search_engine)
-result = await query_engine.a_query("What is the capital of France?")
-print(result)
-
-# Or directly query with the search engine
-answer = await search_engine.a_query("Who wrote Romeo and Juliet?")
-print(answer)
-
-# You can also use other search engines:
-
-# Global search (uses community summaries)
-from ragu.search_engine import GlobalSearchEngine
+#### Global search
+Give an answer by community summaries.
+```python
+from ragu import GlobalSearchEngine
 
 global_search = GlobalSearchEngine(
     client=client,
     knowledge_graph=knowledge_graph,
 )
-result = await QueryPlanEngine(global_search).a_query("Your broad query here")
+global_answer = await global_search.a_query("Your broad query here")
+print(global_answer)
+```
 
-# Naive search (vector-based RAG)
-from ragu.search_engine import NaiveSearchEngine
+**Naive search (vector RAG):**
+```python
+from ragu import NaiveSearchEngine
 
 naive_search = NaiveSearchEngine(
     client=client,
     knowledge_graph=knowledge_graph,
     embedder=embedder,
 )
-result = await QueryPlanEngine(naive_search).a_query("Your query here")
+naive_answer = await naive_search.a_query("Your query here")
+print(naive_answer)
+```
+
+### Query planning wrapper
+Decomposes complex questions into dependent subqueries, executes them in order, and uses intermediate answers to produce a final response.
+```python
+from ragu import QueryPlanEngine
+
+# Wrap any base engine
+planned_local = QueryPlanEngine(local_search)
+result = await planned_local.a_query("What is the capital of France?")
+print(result)
+
+planned_global = QueryPlanEngine(global_search)
+result = await planned_global.a_query("Your broad query here")
+print(result)
+
+planned_naive = QueryPlanEngine(naive_search)
+result = await planned_naive.a_query("Your query here")
+print(result)
 ```
 
 ---
@@ -179,17 +209,17 @@ result = await QueryPlanEngine(naive_search).a_query("Your query here")
 Configure the knowledge graph building pipeline using `BuilderSettings`:
 
 ```python
-from ragu.graph import BuilderSettings
+from ragu import BuilderArguments
 
-builder_settings = BuilderSettings(
-    use_llm_summarization=True,       # Enable LLM-based entity/relation summarization
-    use_clustering=False,             # Apply clustering before summarization. Use it if your text contains many similar entities.
+builder_arguments = BuilderArguments(
+    use_llm_summarization=True,  # Enable LLM-based entity/relation summarization
+    use_clustering=False,  # Apply clustering before summarization. Use it if your text contains many similar entities.
     build_only_vector_context=False,  # Skip graph extraction, only chunk embeddings
-    make_community_summary=True,      # Generate community summaries 
-    remove_isolated_nodes=True,       # Remove entities without relations
-    vectorize_chunks=True,            # Vectorize chunk for naive (vector) search
+    make_community_summary=True,  # Generate community summaries 
+    remove_isolated_nodes=True,  # Remove entities without relations
+    vectorize_chunks=True,  # Vectorize chunk for naive (vector) search
     cluster_only_if_more_than=10000,  # Minimum entities before clustering kicks in
-    max_cluster_size=128,             # Maximum entities per cluster
+    max_cluster_size=128,  # Maximum entities per cluster
 )
 
 # Pass to KnowledgeGraph
@@ -198,36 +228,9 @@ knowledge_graph = await KnowledgeGraph(
     embedder=embedder,
     chunker=chunker,
     artifact_extractor=artifact_extractor,
-    builder_settings=builder_settings,
+    builder_settings=builder_arguments,
 ).build_from_docs(docs)
 ```
-
-#### Storage Configuration
-
-Customize storage backends and their parameters using `StorageArguments`:
-
-```python
-from ragu.storage import StorageArguments
-from ragu.storage.graph_storage_adapters.networkx_adapter import NetworkXStorage
-from ragu.storage.kv_storage_adapters.json_storage import JsonKVStorage
-from ragu.storage.vdb_storage_adapters.nano_vdb import NanoVectorDBStorage
-
-storage_args = StorageArguments(
-    # Graph clustering parameters
-    max_community_size=128,  # Max nodes per community
-    random_seed=42,          # Reproducible community detection
-)
-
-# Pass to KnowledgeGraph
-knowledge_graph = await KnowledgeGraph(
-    client=client,
-    embedder=embedder,
-    chunker=chunker,
-    artifact_extractor=artifact_extractor,
-    storage_arguments=storage_args,
-).build_from_docs(docs)
-```
-
 ---
 
 ### Knowledge Graph Construction
@@ -306,7 +309,7 @@ All RAGU components that use LLMs inherit from `RaguGenerativeModule`, which pro
 #### Viewing Current Prompts
 
 ```python
-from ragu.search_engine import LocalSearchEngine
+from ragu import LocalSearchEngine
 
 search_engine = LocalSearchEngine(
     client,
@@ -382,7 +385,4 @@ search_engine.update_prompt("local_search", custom_instruction)
 #### **Small Models Pipeline**
 - Matvey Solovyev
 - Ilya Myznikov
-
-
-
 
