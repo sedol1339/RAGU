@@ -41,8 +41,8 @@ class CommunitySummarizer(RaguGenerativeModule):
         sorted_communities = []
         for community in communities:
             sorted_communities.append(
-                Community(entities=sorted(
-                    community.entities, key=lambda e: e.id),
+                Community(
+                    entities=sorted(community.entities, key=lambda e: e.id),
                     relations=sorted(community.relations, key=lambda e: e.id),
                     level=community.level,
                     cluster_id=community.cluster_id,
