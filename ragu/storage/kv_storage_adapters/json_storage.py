@@ -88,6 +88,16 @@ class JsonKVStorage(BaseKVStorage):
         """
         self.data.update(data)
 
+    async def delete(self, ids: list[str]) -> None:
+        """
+        Delete multiple records by their IDs from the key-value store.
+
+        :param ids: List of IDs to remove.
+        :type ids: list[str]
+        """
+        for id_ in ids:
+            self.data.pop(id_, None)
+
     async def drop(self):
         """
         Remove all records from the store (in-memory only).
