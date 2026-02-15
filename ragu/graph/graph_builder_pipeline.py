@@ -1,9 +1,14 @@
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, List, Tuple
+from typing import Dict, List, Tuple
 
-from ragu.chunker import BaseChunker
+import networkx as nx
+from graspologic.partition import HierarchicalClusters, hierarchical_leiden
+
+from ragu.chunker.base_chunker import BaseChunker
 from ragu.chunker.types import Chunk
 from ragu.common.global_parameters import Settings
+from ragu.common.logger import logger
 from ragu.embedder.base_embedder import BaseEmbedder
 from ragu.graph.artifacts_summarizer import EntitySummarizer, RelationSummarizer
 from ragu.graph.community_summarizer import CommunitySummarizer
@@ -13,7 +18,7 @@ from ragu.triplet.base_artifact_extractor import BaseArtifactExtractor
 
 
 @dataclass
-class BuilderSettings:
+class BuilderArguments:
     """
     Configuration settings for the knowledge graph building pipeline.
 
@@ -75,8 +80,8 @@ class GraphBuilderModule:
 
     async def run(
             self,
-            entities: List[Entity] | None,
-            relations: List[Relation] | None,
+            entities: List[Entity],
+            relations: List[Relation],
             **kwargs
     ) -> Tuple[List[Entity], List[Relation]]:
         """
@@ -137,14 +142,14 @@ class InMemoryGraphBuilder:
 
     def __init__(
         self,
-        client: BaseLLM = None,
-        chunker: BaseChunker = None,
-        artifact_extractor: BaseArtifactExtractor = None,
-        build_parameters: BuilderSettings = BuilderSettings(),
-        embedder: BaseEmbedder = None,
+        client: BaseLLM | None = None,
+        chunker: BaseChunker | None = None,
+        artifact_extractor: BaseArtifactExtractor | None = None,
+        build_parameters: BuilderArguments = BuilderArguments(),
+        embedder: BaseEmbedder | None = None,
         llm_cache_flush_every: int = 100,
         embedder_cache_flush_every: int = 100,
-        additional_pipeline: List[GraphBuilderModule] = None,
+        additional_pipeline: List[GraphBuilderModule] | None = None,
         language: str | None = None
     ):
         self.client = client
@@ -177,50 +182,136 @@ class InMemoryGraphBuilder:
             self.community_summarizer = CommunitySummarizer(self.client, language=self.language)
 
     async def extract_graph(
-        self, documents: List[str]
-    ) -> Tuple[List[Entity], List[Relation], List[Chunk]]:
+            self, chunks: List[Chunk]
+    ) -> Tuple[List[Entity], List[Relation], List[CommunitySummary], List[Community], List[Chunk]]:
         """
-        Run the full extraction pipeline and produce entities, relations, and chunks.
+        Run the full extraction pipeline and produce entities, relations,
+        community summaries, and communities.
 
         Steps
         -----
-        1. Chunk raw documents using :class:`BaseChunker`.
-        2. Extract entities and relations via :class:`BaseArtifactExtractor` (skipped if build_only_vector_context=True).
-        3. Summarize or merge similar artifacts using :class:`ArtifactsDescriptionSummarizer` (skipped if build_only_vector_context=True).
+        1. Extract entities and relations via :class:`BaseArtifactExtractor` (skipped if build_only_vector_context=True).
+        2. Summarize or merge similar artifacts using :class:`ArtifactsDescriptionSummarizer` (skipped if build_only_vector_context=True).
+        3. Find community and summarize it (optional)
 
-        :param documents: list of input text documents.
+        :param chunks: list of input text documents.
         :return:
-            A tuple ``(entities, relations, chunks)`` where
+            A tuple ``(entities, relations, summaries, communities)`` where
               - **entities** (:class:`list[Entity]`) — extracted and summarized entities (empty if build_only_vector_context=True).
               - **relations** (:class:`list[Relation]`) — extracted and summarized relations (empty if build_only_vector_context=True).
-              - **chunks** (:class:`list[Chunk]`) — the original document chunks used for extraction.
+              - **summaries** (:class:`list[CommunitySummary]`) — generated summaries for detected communities.
+              - **communities** (:class:`list[Community]`) — graph communities detected via Leiden clustering.
+              - **chunks** (:class:`list[Chunk]`) - list of chunks extracted from input documents.
         """
-        # Step 1: chunking
-        chunks = self.chunker(documents)
 
-        # If only building vector context, skip entity/relation extraction
+        if self.chunker is None:
+            logger.info('There is no chunker. Process raw documents.')
+
         if self.build_parameters.build_only_vector_context:
-            return [], [], chunks
+            return [], [], [], [], chunks
 
-        # Step 2: extract entities and relations
+        # Step 1: extract entities and relations
         entities, relations = await self.artifact_extractor(chunks)
 
-        # Step 3: summarize similar artifacts' descriptions
+        # Step 2: summarize similar artifacts' descriptions
         entities = await self.entity_summarizer.run(entities)
         relations = await self.relation_summarizer.run(relations)
 
-        # Step 4: use additional modules
+        # Step 3: use additional modules
         if self.additional_pipeline:
             for additional_module in self.additional_pipeline:
                entities, relations = await additional_module.run(entities, relations)
 
-        return entities, relations, chunks
+        # Step 4. get community summary
+        communities: List[Community] = []
+        summaries: List[CommunitySummary] = []
+        if self.build_parameters.make_community_summary:
+            communities = await self.cluster_graph(entities, relations)
+            if communities:
+                summaries = await self.community_summarizer.summarize(communities)
 
-    async def get_community_summary(self, communities: List[Community]) -> List[CommunitySummary]:
-        """
-        Generate high-level summaries for detected communities in the graph.
+        return entities, relations, summaries, communities, chunks
 
-        :param communities: list of :class:`Community` objects to summarize.
-        :return: list of :class:`CommunitySummary` objects with aggregated information.
-        """
-        return await self.community_summarizer.summarize(communities)
+    async def cluster_graph(
+        self,
+        entities: List[Entity],
+        relations: List[Relation],
+    ) -> List[Community]:
+        if not entities or not relations:
+            return []
+
+        graph = nx.Graph()
+        entity_by_id: Dict[str, Entity] = {}
+        relation_by_id: Dict[str, Relation] = {}
+
+        for entity in entities:
+            if not entity.id:
+                continue
+            entity.clusters = []
+            entity_by_id[entity.id] = entity
+            graph.add_node(entity.id)
+
+        for relation in relations:
+            if not relation.id:
+                continue
+            if relation.subject_id not in entity_by_id or relation.object_id not in entity_by_id:
+                continue
+            relation_by_id[relation.id] = relation
+            graph.add_edge(relation.subject_id, relation.object_id, relation_id=relation.id)
+
+        if graph.number_of_nodes() == 0 or graph.number_of_edges() == 0:
+            return []
+
+        community_mapping: HierarchicalClusters = hierarchical_leiden(
+            graph,
+            max_cluster_size=self.build_parameters.max_cluster_size,
+            random_seed=self.build_parameters.random_seed,
+        )
+
+        clusters = defaultdict(lambda: defaultdict(lambda: {"entity_ids": set(), "relation_ids": set()}))
+        node_membership = defaultdict(set)
+
+        for part in community_mapping:
+            level = part.level
+            cluster_id = part.cluster
+            node_id = str(part.node)
+
+            node = entity_by_id.get(node_id)
+            if node is None:
+                continue
+
+            node.clusters.append({"level": level, "cluster_id": cluster_id})
+            clusters[level][cluster_id]["entity_ids"].add(node_id)
+            node_membership[node_id].add((level, cluster_id))
+
+        for relation in relation_by_id.values():
+            common = node_membership[relation.subject_id].intersection(
+                node_membership[relation.object_id]
+            )
+            for level, cluster_id in common:
+                clusters[level][cluster_id]["relation_ids"].add(relation.id)
+
+        communities: List[Community] = []
+        for level in sorted(clusters.keys()):
+            for cluster_id in sorted(clusters[level].keys()):
+                payload = clusters[level][cluster_id]
+                community_entities = [
+                    entity_by_id[node_id]
+                    for node_id in sorted(payload["entity_ids"])
+                    if node_id in entity_by_id
+                ]
+                community_relations = [
+                    relation_by_id[relation_id]
+                    for relation_id in sorted(payload["relation_ids"])
+                    if relation_id in relation_by_id
+                ]
+                communities.append(
+                    Community(
+                        entities=community_entities,
+                        relations=community_relations,
+                        level=level,
+                        cluster_id=cluster_id,
+                    )
+                )
+
+        return communities
