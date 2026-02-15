@@ -1,17 +1,15 @@
 import asyncio
 
-from ragu.llm import OpenAIClient
+from ragu import (
+    ArtifactsExtractorLLM,
+    BuilderArguments,
+    KnowledgeGraph,
+    LocalSearchEngine,
+    Settings,
+    SimpleChunker,
+)
 from ragu.embedder import OpenAIEmbedder
-
-from ragu.chunker import SimpleChunker
-from ragu.graph import KnowledgeGraph, InMemoryGraphBuilder
-
-from ragu.triplet import ArtifactsExtractorLLM
-from ragu.storage import Index
-
-from ragu.search_engine import LocalSearchEngine
-
-from ragu.common.global_parameters import Settings
+from ragu.llm import OpenAIClient
 from ragu.utils.ragu_utils import read_text_from_files
 
 
@@ -22,58 +20,65 @@ API_KEY = "..."
 
 
 async def main():
-    # Set working dir
-    Settings.storage_folder = "../example_knowledge_graph"
+    # Configure working directory and language
+    Settings.storage_folder = "ragu_working_dir/example_knowledge_graph"
+    Settings.language = "russian"
 
-    # Read documents
-    docs = read_text_from_files("../examples/data/ru")
+    # Load documents
+    docs = read_text_from_files("examples/data/ru")
 
-    # Set up chunker
-    chunker = SimpleChunker(max_chunk_size=2048, overlap=0)
+    # Initialize chunker
+    chunker = SimpleChunker(max_chunk_size=1000)
 
-    # Set up LLM and embedder
+    # Set up LLM client
     client = OpenAIClient(
-        LLM_MODEL_NAME,
-        BASE_URL,
-        API_KEY,
+        model_name=LLM_MODEL_NAME,
+        base_url=BASE_URL,
+        api_token=API_KEY,
         max_requests_per_second=1,
-        max_requests_per_minute=60
+        max_requests_per_minute=60,
+        cache_flush_every=10,
     )
+
+    # Set up artifact extractor
+    artifact_extractor = ArtifactsExtractorLLM(client=client, do_validation=False)
+
+    # Set up embedder
     embedder = OpenAIEmbedder(
-        EMBEDDER_MODEL_NAME,
-        BASE_URL,
-        API_KEY,
+        model_name=EMBEDDER_MODEL_NAME,
+        base_url=BASE_URL,
+        api_token=API_KEY,
         dim=3072,
         max_requests_per_second=1,
-        max_requests_per_minute=60
+        max_requests_per_minute=60,
+        use_cache=True,
     )
 
-    # Create llm artifact extractor
-    artifact_extractor = ArtifactsExtractorLLM(client=client, do_validation=True)
-
-    # Set up pipeline
-    pipeline = InMemoryGraphBuilder(client, chunker, artifact_extractor)
-    index = Index(
-        embedder,
-        graph_storage_kwargs={"clustering_params": {"max_cluster_size": 6}}
+    # Configure graph builder
+    builder_settings = BuilderArguments(
+        use_llm_summarization=True,
+        vectorize_chunks=True,
     )
 
     # Build knowledge graph
-    knowledge_graph = await KnowledgeGraph(
-        extraction_pipeline=pipeline,
-        index=index,
-        make_community_summary=True,
-        language="russian",
-    ).build_from_docs(docs)
+    knowledge_graph = KnowledgeGraph(
+        client=client,
+        embedder=embedder,
+        chunker=chunker,
+        artifact_extractor=artifact_extractor,
+        builder_settings=builder_settings,
+    )
+    await knowledge_graph.build_from_docs(docs)
 
     # Set up search engine
     search_engine = LocalSearchEngine(
         client,
         knowledge_graph,
-        embedder
+        embedder,
+        tokenizer_model="gpt-4o-mini",
     )
 
-    # Run RAGU :)
+    # Run local search
     questions = [
         "Кто написал гимн Норвегии?",
         "Шум, издаваемый ЭТИМИ ПАУКООБРАЗНЫМИ, слышен за пять километров. Отсюда и их название.",
