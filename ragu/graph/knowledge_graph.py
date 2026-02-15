@@ -22,7 +22,16 @@ from ragu.storage.base_storage import EdgeSpec
 
 class KnowledgeGraph:
     """
-    High-level facade for knowledge graph operations.
+    High-level facade for building, storing, and querying a knowledge graph.
+
+    :param client: LLM client used by extraction and summarization modules.
+    :param embedder: Embedder used for vector storage and clustering/similarity steps.
+    :param chunker: Optional chunker used to split input documents.
+    :param artifact_extractor: Optional extractor used to generate entities/relations from chunks.
+    :param builder_settings: Graph-building behavior configuration. Defaults are used if omitted.
+    :param storage_settings: Storage backend configuration. Defaults are used if omitted.
+    :param additional_modules: Optional post-processing modules for extracted graph items.
+    :param language: Optional language override. Defaults to ``Settings.language``.
     """
 
     def __init__(

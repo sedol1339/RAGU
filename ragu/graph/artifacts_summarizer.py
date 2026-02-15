@@ -18,6 +18,14 @@ from ragu.common.prompts.messages import ChatMessages, render
 
 
 class EntitySummarizer(RaguGenerativeModule):
+    """
+    Summarizes and merges textual descriptions of duplicate entities.
+
+    Entities are grouped by ``(entity_name, entity_type)``, merged, and optionally
+    summarized with an LLM. When enabled, large description sets can be clustered
+    before summarization to reduce prompt size.
+    """
+
     def __init__(
         self,
         client: Optional[BaseLLM] = None,
@@ -57,7 +65,7 @@ class EntitySummarizer(RaguGenerativeModule):
                 "Clustering is enabled but no embedder is provided. Please provide an embedder."
             )
 
-    async def run(self, entities: List[Entity]) -> Any:
+    async def run(self, entities: List[Entity]) -> List[Entity]:
         """
         Execute the full artifact summarization pipeline.
 
@@ -208,7 +216,7 @@ class EntitySummarizer(RaguGenerativeModule):
 
 class RelationSummarizer(RaguGenerativeModule):
     """
-    Summarizes and merges textual descriptions of entities and relations
+    Summarizes and merges textual descriptions of entities and relations.
     extracted from documents.
 
     The class groups duplicated entities and relations by their identifiers
@@ -244,7 +252,7 @@ class RelationSummarizer(RaguGenerativeModule):
                 "LLM summarization is enabled but no client is provided. Please provide a client."
             )
 
-    async def run(self, relations: List[Relation], **kwargs) -> Any:
+    async def run(self, relations: List[Relation], **kwargs) -> List[Relation]:
         """
         Execute the full artifact summarization pipeline.
 

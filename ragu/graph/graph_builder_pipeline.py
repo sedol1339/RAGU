@@ -25,29 +25,20 @@ class BuilderArguments:
     This dataclass controls various aspects of graph construction including
     summarization strategies, clustering behavior, and optimization modes.
 
-    Attributes
-    ----------
-    use_llm_summarization : bool, default=True
-        Enable LLM-based summarization for merging and deduplicating similar
-        entity and relation descriptions.
-    use_clustering : bool, default=False
-        Apply clustering to group similar entities before summarization.
-        Helps when number of similar entities is very large.
-    build_only_vector_context : bool, default=False
-        Skip entity/relation extraction and build a context only for naive (vector) RAG.
-    make_community_summary : bool, default=True
-        Generate high-level summaries for detected communities in the graph.
-        Required for global search operations that rely on community-level context.
-    remove_isolated_nodes : bool, default=True
-        Remove entities that have no relations to other entities in the graph.
-    vectorize_chunks : bool, default=False
-        Generate and store embeddings for text chunks.
-    cluster_only_if_more_than : int, default=10000
-        Minimum number of entities required before clustering is applied.
-    max_cluster_size : int, default=128
-        Maximum number of entities per cluster during summarization.
-    random_seed : int, default=42
-        Random seed for reproducible clustering and community detection results.
+    :param use_llm_summarization: Enable LLM-based summarization for merging and
+        deduplicating similar entity and relation descriptions.
+    :param use_clustering: Apply clustering to group similar entities before
+        summarization.
+    :param build_only_vector_context: Skip entity/relation extraction and build
+        only vector context for naive RAG.
+    :param make_community_summary: Generate high-level summaries for detected
+        graph communities.
+    :param remove_isolated_nodes: Remove entities that have no relations.
+    :param vectorize_chunks: Generate and store embeddings for text chunks.
+    :param cluster_only_if_more_than: Minimum number of entities required before
+        clustering is applied.
+    :param max_cluster_size: Maximum number of entities per cluster.
+    :param random_seed: Random seed for reproducible clustering/community detection.
     """
     use_llm_summarization: bool = True
     use_clustering: bool = False
@@ -72,10 +63,7 @@ class GraphBuilderModule:
       - filtering noisy relations
       - post-processing after extraction
 
-    Methods
-    -------
-    run(entities, relations, **kwargs)
-        Perform some operation on graph items.
+    Subclasses should override `run` to apply module-specific logic.
     """
 
     async def run(
@@ -111,33 +99,17 @@ class InMemoryGraphBuilder:
     and only chunking is performed. This is useful for naive vector RAG where only
     chunk embeddings are needed without knowledge graph construction.
 
-    Parameters
-    ----------
-    client : BaseLLM, optional
-        LLM client used for all text understanding and summarization tasks.
-        Not required if build_parameters.build_only_vector_context=True.
-    chunker : BaseChunker, optional
-        Module responsible for splitting documents into chunks.
-    artifact_extractor : BaseArtifactExtractor, optional
-        Extracts entities and relations from text chunks.
-        Not required if build_parameters.build_only_vector_context=True.
-    build_parameters : KnowledgeGraphBuilderSettings, optional
-        Configuration settings controlling graph building behavior including
-        summarization, clustering, and optimization modes.
-    embedder : BaseEmbedder, optional
-        Embedding model used for vectorizing entities, relations, and optionally chunks.
-    llm_cache_flush_every : int, default=100
-        Number of LLM calls between cache flushes to disk.
-        Lower values increase I/O.
-    embedder_cache_flush_every : int, default=100
-        Number of embedder calls between cache flushes to disk.
-        Embedder caches are typically larger, so default flush frequency is lower.
-    additional_pipeline : list[GraphBuilderModule], optional
-        Optional list of post-processing modules applied after main extraction.
-        Used for custom normalization, filtering and others logic.
-    language : str, optional
-        Working language for all tasks.
-        Default: inherited from global Settings.language ("english").
+    :param client: LLM client used for understanding and summarization tasks.
+    :param chunker: Module responsible for splitting documents into chunks.
+    :param artifact_extractor: Extractor for entities and relations from chunks.
+    :param build_parameters: Graph-building settings controlling summarization,
+        clustering, and optimization behavior.
+    :param embedder: Embedding model used for vectorization and clustering.
+    :param llm_cache_flush_every: Number of LLM calls between cache flushes.
+    :param embedder_cache_flush_every: Number of embedder calls between cache flushes.
+    :param additional_pipeline: Optional post-processing modules executed after
+        extraction/summarization.
+    :param language: Working language for prompts and generation.
     """
 
     def __init__(
@@ -188,11 +160,11 @@ class InMemoryGraphBuilder:
         Run the full extraction pipeline and produce entities, relations,
         community summaries, and communities.
 
-        Steps
-        -----
-        1. Extract entities and relations via :class:`BaseArtifactExtractor` (skipped if build_only_vector_context=True).
-        2. Summarize or merge similar artifacts using :class:`ArtifactsDescriptionSummarizer` (skipped if build_only_vector_context=True).
-        3. Find community and summarize it (optional)
+        Pipeline:
+          1. Extract entities/relations via :class:`BaseArtifactExtractor`
+             (skipped if ``build_only_vector_context=True``).
+          2. Summarize or merge similar artifacts.
+          3. Detect communities and generate summaries (optional).
 
         :param chunks: list of input text documents.
         :return:
@@ -237,6 +209,15 @@ class InMemoryGraphBuilder:
         entities: List[Entity],
         relations: List[Relation],
     ) -> List[Community]:
+        """
+        Detect graph communities with hierarchical Leiden clustering.
+
+        Builds an undirected graph from entities/relations and do clusterization.
+
+        :param entities: Entities.
+        :param relations: Relations.
+        :return: Detected communities.
+        """
         if not entities or not relations:
             return []
 

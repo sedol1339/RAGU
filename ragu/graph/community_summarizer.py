@@ -15,19 +15,20 @@ class CommunitySummarizer(RaguGenerativeModule):
     """
     Generates textual summaries for detected graph communities using an LLM.
 
-    The summarization process typically converts a group of entities or
-    relations belonging to the same community into a human-readable report
-    containing a title, overall summary, and list of findings.
+    The summarization process converts a group of entities or
+    relations belonging to the same community into a human-readable report.
 
-    Attributes
-    ----------
-    client : BaseLLM
-        LLM client used for generating community reports.
-    language : str
-        Language of generated summaries.
+    :param client: LLM client used for generating community reports.
+    :param language: Language of generated summaries. Defaults to ``Settings.language``.
     """
 
     def __init__(self, client: BaseLLM, language: str | None = None) -> None:
+        """
+        Initialize community summarizer.
+
+        :param client: LLM client used for summarization.
+        :param language: Optional language override.
+        """
         _PROMPTS = ["community_report"]
         super().__init__(prompts=_PROMPTS)
 
@@ -37,6 +38,9 @@ class CommunitySummarizer(RaguGenerativeModule):
     async def summarize(self, communities: List[Community]) -> List[CommunitySummary]:
         """
         Generate structured summaries for a list of graph communities.
+
+        :param communities: Communities to summarize.
+        :return: Community summaries aligned with input communities.
         """
         sorted_communities = []
         for community in communities:
@@ -76,6 +80,9 @@ class CommunitySummarizer(RaguGenerativeModule):
     def combine_report_text(report: CommunityReportModel) -> str:
         """
         Merge structured sections of a community report into a readable text block.
+
+        :param report: Structured community report.
+        :return: Rendered report text.
         """
         if not report:
             return ""
