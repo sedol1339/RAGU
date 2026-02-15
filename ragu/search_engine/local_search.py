@@ -26,10 +26,9 @@ class LocalSearchEngine(BaseEngine):
     Performs local retrieval-augmented search (RAG) over a knowledge graph.
 
     The engine:
-      1) Retrieves relevant entities/relations/chunks/summaries for the query,
-      2) Builds and truncates a local context,
-      3) Renders a prompt template (Jinja2) into concrete ChatMessages,
-      4) Sends OpenAI-typed messages to the LLM for generation/parsing.
+      1. Retrieves relevant entities for the query.
+      2. Retrieves related items (relations, summary and chunks).
+      3. Generates a final response
 
     Reference
     ---------
@@ -109,14 +108,6 @@ class LocalSearchEngine(BaseEngine):
     async def a_query(self, query: str, top_k: int = 20) -> str:
         """
         Execute a local RAG query.
-
-        Steps:
-          1) Run `a_search` to build a local graph-derived context
-          2) Truncate the context to fit `max_context_length`
-          3) Take the stored RAGUInstruction, render its ChatMessages via Jinja2
-             using (query, context, language)
-          4) Send rendered messages to the LLM. If the instruction has `pydantic_model`,
-             the LLM client may parse into that model.
 
         :param query: User query in natural language.
         :param top_k: Number of entities to retrieve into context.
