@@ -1,14 +1,17 @@
-import asyncio
+from __future__ import annotations
+
 import os
-from dataclasses import asdict
+import re
+from collections import defaultdict
+from dataclasses import asdict, dataclass, field
 from typing import (
     Any,
-    Awaitable,
-    Callable,
     Dict,
     Iterable,
     List,
     Optional,
+    Set,
+    Tuple,
     Type
 )
 
@@ -25,303 +28,1036 @@ from ragu.graph.types import (
 from ragu.storage.base_storage import (
     BaseKVStorage,
     BaseVectorStorage,
-    BaseGraphStorage
+    BaseGraphStorage,
+    EdgeSpec,
 )
 from ragu.storage.graph_storage_adapters.networkx_adapter import NetworkXStorage
 from ragu.storage.kv_storage_adapters.json_storage import JsonKVStorage
 from ragu.storage.vdb_storage_adapters.nano_vdb import NanoVectorDBStorage
-from ragu.common.logger import logger
+
+
+@dataclass
+class StorageArguments:
+    """
+    Configuration for Index storage backends.
+
+    :param graph_backend_storage: Storage backend class for graph structure (nodes/edges).
+    :param kv_storage_type: Storage backend class for key-value data (chunks, communities, summaries).
+    :param vdb_storage_type: Storage backend class for vector embeddings (entities, relations, chunks).
+    :param chunks_kv_storage_kwargs: Additional kwargs passed to KV storage for text chunks.
+    :param summary_kv_storage_kwargs: Additional kwargs passed to KV storage for community summaries.
+    :param communities_kv_storage_kwargs: Additional kwargs passed to KV storage for community metadata.
+    :param vdb_storage_kwargs: Additional kwargs passed to vector database instances.
+    :param graph_storage_kwargs: Additional kwargs passed to graph backend storage.
+    """
+    graph_backend_storage: Type[BaseGraphStorage] = NetworkXStorage
+    kv_storage_type: Type[BaseKVStorage] = JsonKVStorage
+    vdb_storage_type: Type[BaseVectorStorage] = NanoVectorDBStorage
+
+    chunks_kv_storage_kwargs: Dict = field(default_factory=dict)
+    summary_kv_storage_kwargs: Dict = field(default_factory=dict)
+    communities_kv_storage_kwargs: Dict = field(default_factory=dict)
+    vdb_storage_kwargs: Dict = field(default_factory=dict)
+    graph_storage_kwargs: Dict = field(default_factory=dict)
 
 
 class Index:
     """
-    Index class that manages storages for a knowledge graph.
+    Manages all storage operations for a knowledge graph.
+
+    Coordinates three storage backends (graph, vector DB, KV) and provides
+    batch CRUD operations with cascading deletes and duplicate merging.
     """
 
     def __init__(
             self,
             embedder: BaseEmbedder,
-            graph_backend_storage: Type[BaseGraphStorage] = NetworkXStorage,
-            kv_storage_type: Type[BaseKVStorage] = JsonKVStorage,
-            vdb_storage_type: Type[BaseVectorStorage] = NanoVectorDBStorage,
-            chunks_kv_storage_kwargs: Optional[Dict] = None,
-            summary_kv_storage_kwargs: Optional[Dict] = None,
-            communities_kv_storage_kwargs: Optional[Dict] = None,
-            vdb_storage_kwargs: Optional[Dict] = None,
-            graph_storage_kwargs: Optional[Dict] = None,
+            arguments: StorageArguments,
     ):
         """
-        Initializes the Index.
+        Initialize storage backends and in-memory reverse indexes.
+
+        :param embedder: Embedder used by vector storages.
+        :param arguments: Configuration for storage backend implementations.
         """
-        # Initialize storage folder if it doesn't exist
         Settings.init_storage_folder()
         storage_folder: str = Settings.storage_folder
 
         self.embedder = embedder
-        self.summary_kv_storage_kwargs = self._build_storage_kwargs(
+
+        # Reverse indexes for cascade operations
+        self._chunk_to_entities: Dict[str, Set[str]] = defaultdict(set)
+        self._chunk_to_relations: Dict[str, Set[str]] = defaultdict(set)
+
+        summary_kv_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["community_summary_kv_storage_name"],
-            summary_kv_storage_kwargs,
+            arguments.summary_kv_storage_kwargs,
         )
-        self.community_kv_storage_kwargs = self._build_storage_kwargs(
+        community_kv_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["community_kv_storage_name"],
-            communities_kv_storage_kwargs,
+            arguments.communities_kv_storage_kwargs,
         )
-        self.chunks_kv_storage_kwargs = self._build_storage_kwargs(
+        chunks_kv_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["chunks_kv_storage_name"],
-            chunks_kv_storage_kwargs,
+            arguments.chunks_kv_storage_kwargs,
         )
-        self.vdb_storage_kwargs = self._build_storage_kwargs(
+        entity_vdb_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["entity_vdb_name"],
-            vdb_storage_kwargs,
+            arguments.vdb_storage_kwargs,
         )
-        relation_vdb_storage_kwargs = self._build_storage_kwargs(
+        relation_vdb_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["relation_vdb_name"],
-            vdb_storage_kwargs,
+            arguments.vdb_storage_kwargs,
         )
-        chunk_vdb_storage_kwargs = self._build_storage_kwargs(
+        chunk_vdb_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["chunk_vdb_name"],
-            vdb_storage_kwargs,
+            arguments.vdb_storage_kwargs,
         )
-        self.graph_storage_kwargs = self._build_storage_kwargs(
+        graph_kwargs = self._build_storage_kwargs(
             storage_folder,
             DEFAULT_FILENAMES["knowledge_graph_storage_name"],
-            graph_storage_kwargs,
+            arguments.graph_storage_kwargs,
         )
 
         # Key-value storages
-        self.chunks_kv_storage = kv_storage_type(**self.chunks_kv_storage_kwargs)  # type: ignore
+        self.chunks_kv_storage = arguments.kv_storage_type(**chunks_kv_kwargs)
+        self.community_summary_kv_storage = arguments.kv_storage_type(**summary_kv_kwargs)
+        self.community_kv_storage = arguments.kv_storage_type(**community_kv_kwargs)
 
-        self.community_summary_kv_storage = kv_storage_type(**self.summary_kv_storage_kwargs)  # type: ignore
-        self.communities_kv_storage = self.community_summary_kv_storage
-
-        self.community_kv_storage = kv_storage_type(**self.community_kv_storage_kwargs)  # type: ignore
-
-        # Vector storage
-        self.entity_vector_db = vdb_storage_type(embedder=embedder, **self.vdb_storage_kwargs)  # type: ignore
-        self.relation_vector_db = vdb_storage_type(embedder=embedder, **relation_vdb_storage_kwargs)  # type: ignore
-        self.chunk_vector_db = vdb_storage_type(embedder=embedder, **chunk_vdb_storage_kwargs)  # type: ignore
+        # Vector storages
+        self.entity_vector_db = arguments.vdb_storage_type(embedder=embedder, **entity_vdb_kwargs)
+        self.relation_vector_db = arguments.vdb_storage_type(embedder=embedder, **relation_vdb_kwargs)
+        self.chunk_vector_db = arguments.vdb_storage_type(embedder=embedder, **chunk_vdb_kwargs)
 
         # Graph storage
-        self.graph_backend = graph_backend_storage(**self.graph_storage_kwargs)  # type: ignore
+        self.graph_backend = arguments.graph_backend_storage(
+            **graph_kwargs
+        )
 
-    async def make_index(
-            self,
-            entities: List[Entity] = None,
-            relations: List[Relation] = None,
-            communities: List[Community] = None,
-            summaries: List[CommunitySummary] = None,
-    ) -> None:
+    async def insert_entities(self, entities: List[Entity]) -> "Index":
         """
-        Creates an index for the given knowledge graph. Save entities, relations, communities and community summaries.
-        """
-        tasks = []
+        Insert entities into graph and vector DB.
 
-        if entities:
-            tasks.extend(
-                [
-                    self._insert_entities_to_graph(entities),
-                    self._insert_entities_to_vdb(entities),
-                ]
-            )
-        if relations:
-            tasks.extend(
-                [
-                    self._insert_relations_to_graph(relations),
-                    self._insert_relations_to_vdb(relations),
-                ]
-            )
-        if communities:
-            tasks.append(self._insert_communities(communities))
-        if summaries:
-            tasks.append(self._insert_summaries(summaries))
+        Duplicate IDs in the incoming batch are merged. If an entity with the
+        same ID already exists, incoming and existing values are merged.
 
-        if tasks:
-            await asyncio.gather(*tasks)
-
-    async def _insert_entities_to_graph(self, entities: List[Entity]) -> None:
-        if not entities:
-            return
-        backend = self.graph_backend
-        if self.graph_backend is None:
-            logger.warning("Graph storage is not initialized.")
-            return
-        await self._graph_bulk_upsert(backend, entities, backend.upsert_node, "entities")
-
-    async def _insert_relations_to_graph(self, relations: List[Relation]) -> None:
-        if not relations:
-            return
-        backend = self.graph_backend
-        if backend is None:
-            logger.warning("Graph storage is not initialized.")
-            return
-        await self._graph_bulk_upsert(backend, relations, backend.upsert_edge, "relations")
-
-    async def _insert_entities_to_vdb(self, entities: List[Entity]) -> None:
-        """
-        Inserts entities from the knowledge graph into the vector database.
+        :param entities: Entities to insert.
+        :return: Self for method chaining.
         """
         if not entities:
-            return
+            return self
 
-        data_for_vdb = {
-            entity.id: {
-                "entity_name": entity.entity_name,
-                "content": entity.entity_name + " - " + entity.description,
-            }
-            for entity in entities
+        incoming_by_id: Dict[str, List[Entity]] = defaultdict(list)
+        for entity in entities:
+            incoming_by_id[entity.id].append(entity)
+
+        existing_entities = await self.graph_backend.get_nodes(list(incoming_by_id.keys()))
+        existing_by_id: Dict[str, Entity] = {
+            e.id: e for e in existing_entities if e is not None
         }
-        await self._vdb_upsert(self.entity_vector_db, data_for_vdb, "entities")
 
-    async def _insert_relations_to_vdb(self, relations: List[Relation]) -> None:
+        entities_to_insert: List[Entity] = []
+        for entity_id, incoming_group in incoming_by_id.items():
+            merged_group = list(incoming_group)
+            existing = existing_by_id.get(entity_id)
+            if existing is not None:
+                merged_group.append(existing)
+
+            if len(merged_group) > 1:
+                entities_to_insert.extend(self._merge_entities({entity_id: merged_group}))
+            else:
+                entities_to_insert.extend(incoming_group)
+
+        await self.graph_backend.upsert_nodes(entities_to_insert)
+        vdb_data = {
+            e.id: {
+                "entity_name": e.entity_name,
+                "content": f"{e.entity_name} - {e.description}",
+            }
+            for e in entities_to_insert
+        }
+        await self.entity_vector_db.upsert(vdb_data)
+
+        await self.graph_backend.index_done_callback()
+        await self.entity_vector_db.index_done_callback()
+        await self._update_reverse_indexes(entities=entities_to_insert)
+        return self
+
+    async def update_entities(self, entities: List[Entity]) -> "Index":
         """
-        Inserts relations from the knowledge graph into the vector database.
+        Update entities by ID using replace semantics.
+
+        Existing entities are replaced by incoming payloads. No merge with
+        previous values is performed.
+
+        :param entities: Entities to update.
+        :return: Self for method chaining.
+        :raises ValueError: If entity IDs are missing/duplicated in request or absent in storage.
+        """
+        if not entities:
+            return self
+
+        incoming_by_id: Dict[str, List[Entity]] = defaultdict(list)
+        for entity in entities:
+            incoming_by_id[entity.id].append(entity)
+
+        duplicate_ids = [entity_id for entity_id, group in incoming_by_id.items() if len(group) > 1]
+        if duplicate_ids:
+            raise ValueError(f"Cannot update duplicated entity IDs in one request: {duplicate_ids}")
+
+        entity_ids = list(incoming_by_id.keys())
+        existing_entities = await self.graph_backend.get_nodes(entity_ids)
+        missing_ids = [entity_id for entity_id, existing in zip(entity_ids, existing_entities) if existing is None]
+        if missing_ids:
+            raise ValueError(f"Cannot update non-existent entities: {missing_ids}")
+
+        entities_to_update = [group[0] for group in incoming_by_id.values()]
+
+        await self.graph_backend.upsert_nodes(entities_to_update)
+        vdb_data = {
+            e.id: {
+                "entity_name": e.entity_name,
+                "content": f"{e.entity_name} - {e.description}",
+            }
+            for e in entities_to_update
+        }
+        await self.entity_vector_db.upsert(vdb_data)
+
+        await self.graph_backend.index_done_callback()
+        await self.entity_vector_db.index_done_callback()
+
+        await self._update_reverse_indexes(
+            deleted_entity_ids=entity_ids,
+            entities=entities_to_update,
+        )
+        return self
+
+    async def insert_relations(self, relations: List[Relation]) -> "Index":
+        """
+        Insert relations into graph and vector DB.
+
+        Duplicate IDs in the incoming batch are merged. If a relation with the
+        same ID already exists, incoming and existing values are merged.
+
+        :param relations: Relations to insert.
+        :return: Self for method chaining.
+        :raises ValueError: If referenced entities don't exist.
         """
         if not relations:
-            return
+            return self
 
-        data_for_vdb = {
-            relation.id: {
-                "subject": relation.subject_id,
-                "object": relation.object_id,
-                "content": relation.description
+        for relation in relations:
+            if not relation.id:
+                raise ValueError("Cannot insert relation without id")
+
+        await self._validate_relation_endpoints_exist(relations)
+
+        incoming_by_id: Dict[str, List[Relation]] = defaultdict(list)
+        for relation in relations:
+            incoming_by_id[relation.id].append(relation)
+
+        existing_relation_groups = await self._get_existing_relations_grouped_by_id(set(incoming_by_id.keys()))
+        existing_relation_ids = list(existing_relation_groups.keys())
+
+        relations_to_insert: List[Relation] = []
+        for relation_id, incoming_group in incoming_by_id.items():
+            merged_group = list(incoming_group)
+            merged_group.extend(existing_relation_groups.get(relation_id, []))
+
+            if len(merged_group) > 1:
+                relations_to_insert.extend(self._merge_relations({relation_id: merged_group}))
+            else:
+                relations_to_insert.extend(incoming_group)
+
+        delete_specs: List[EdgeSpec] = [
+            (relation.subject_id, relation.object_id, relation.id)
+            for relations_group in existing_relation_groups.values()
+            for relation in relations_group
+            if relation is not None and relation.id
+        ]
+        if delete_specs:
+            await self.graph_backend.delete_edges(delete_specs)
+
+        await self.graph_backend.upsert_edges(relations_to_insert)
+
+        vdb_data = {
+            r.id: {
+                "subject": r.subject_id,
+                "object": r.object_id,
+                "content": r.description,
             }
-            for relation in relations
+            for r in relations_to_insert
         }
-        await self._vdb_upsert(self.relation_vector_db, data_for_vdb, "relations")
+        if existing_relation_ids:
+            await self.relation_vector_db.delete(existing_relation_ids)
+        await self.relation_vector_db.upsert(vdb_data)
 
-    async def insert_chunks(self, chunks: List[Chunk], vectorize: bool = False) -> None:
+        await self.graph_backend.index_done_callback()
+        await self.relation_vector_db.index_done_callback()
+        await self._update_reverse_indexes(
+            deleted_relation_ids=existing_relation_ids,
+            relations=relations_to_insert,
+        )
+        return self
+
+    async def update_relations(self, relations: List[Relation]) -> "Index":
         """
-        Stores raw chunks in a KV storage (id -> chunk fields).
-        Optionally vectorizes chunks and stores them in the vector database.
+        Update relations by ID using replace semantics.
 
-        :param chunks: List of Chunk objects to store.
-        :param vectorize: If True, also insert chunks into the vector database for similarity search.
+        Existing relations are replaced by incoming payloads. No merge with
+        previous values is performed.
+
+        :param relations: Relations to update.
+        :return: Self for method chaining.
+        :raises ValueError: If relation IDs are missing/duplicated in request,
+            IDs are absent in storage, or referenced entities don't exist.
         """
-        tasks = []
+        if not relations:
+            return self
 
-        if self.chunks_kv_storage is not None:
-            data_for_kv = {}
-            for chunk in chunks:
-                chunk_dict = asdict(chunk)
-                chunk_id = chunk_dict.pop("id")
-                data_for_kv[chunk_id] = chunk_dict
+        incoming_by_id: Dict[str, List[Relation]] = defaultdict(list)
+        for relation in relations:
+            if not relation.id:
+                raise ValueError("Cannot update relation without id")
+            incoming_by_id[relation.id].append(relation)
 
-            async def insert_to_kv():
-                await self.chunks_kv_storage.upsert(data_for_kv)
-                await self.chunks_kv_storage.index_done_callback()
+        duplicate_ids = [relation_id for relation_id, group in incoming_by_id.items() if len(group) > 1]
+        if duplicate_ids:
+            raise ValueError(f"Cannot update duplicated relation IDs in one request: {duplicate_ids}")
 
-            tasks.append(insert_to_kv())
+        relation_ids = list(incoming_by_id.keys())
+        existing_relation_groups = await self._get_existing_relations_grouped_by_id(set(relation_ids))
+        missing_ids = [relation_id for relation_id in relation_ids if relation_id not in existing_relation_groups]
+        if missing_ids:
+            raise ValueError(f"Cannot update non-existent relations: {missing_ids}")
 
-        if vectorize:
-            tasks.append(self._insert_chunks_to_vdb(chunks))
+        relations_to_update = [group[0] for group in incoming_by_id.values()]
+        await self._validate_relation_endpoints_exist(relations_to_update)
 
-        if tasks:
-            await asyncio.gather(*tasks)
+        delete_specs: List[EdgeSpec] = [
+            (relation.subject_id, relation.object_id, relation.id)
+            for relations_group in existing_relation_groups.values()
+            for relation in relations_group
+            if relation is not None and relation.id
+        ]
+        if delete_specs:
+            await self.graph_backend.delete_edges(delete_specs)
 
-    async def _insert_chunks_to_vdb(self, chunks: List[Chunk]) -> None:
+        await self.graph_backend.upsert_edges(relations_to_update)
+
+        vdb_data = {
+            r.id: {
+                "subject": r.subject_id,
+                "object": r.object_id,
+                "content": r.description,
+            }
+            for r in relations_to_update
+        }
+        await self.relation_vector_db.delete(relation_ids)
+        await self.relation_vector_db.upsert(vdb_data)
+
+        await self.graph_backend.index_done_callback()
+        await self.relation_vector_db.index_done_callback()
+        await self._update_reverse_indexes(
+            deleted_relation_ids=relation_ids,
+            relations=relations_to_update,
+        )
+        return self
+
+    async def upsert_chunks(self, chunks: List[Chunk], vectorize: bool = False) -> "Index":
         """
-        Inserts chunks into the vector database for similarity search.
+        Insert or update chunks into KV storage (and optionally vector DB).
+
+        :param chunks: Chunks to upsert.
+        :param vectorize: Whether to generate and store embeddings.
+        :return: Self for method chaining.
         """
         if not chunks:
-            return
+            return self
 
-        data_for_vdb = {
-            chunk.id: {
-                "content": chunk.content,
-                "doc_id": chunk.doc_id,
+        # Store in KV
+        kv_data = {}
+        for chunk in chunks:
+            chunk_dict = asdict(chunk)
+            chunk_id = chunk_dict.pop("id")
+            kv_data[chunk_id] = chunk_dict
+
+        await self.chunks_kv_storage.upsert(kv_data)
+
+        # Optionally store in vector DB
+        if vectorize:
+            vdb_data = {
+                c.id: {"content": c.content, "doc_id": c.doc_id}
+                for c in chunks
             }
-            for chunk in chunks
+            await self.chunk_vector_db.upsert(vdb_data)
+            await self.chunk_vector_db.index_done_callback()
+
+        await self.chunks_kv_storage.index_done_callback()
+        return self
+
+    async def reindex_cluster_ids(
+        self,
+        entities: List[Entity],
+        communities: List[Community],
+        summaries: Optional[List[CommunitySummary]] = None,
+    ) -> tuple[List[Entity], List[Community], List[CommunitySummary]]:
+        """
+        Remap cluster IDs to be globally unique per level across indexing runs.
+
+        Levels are preserved to keep level-based filtering intact.
+
+        :param entities: Entities whose cluster memberships should be remapped.
+        :param communities: Newly generated communities with local cluster IDs.
+        :param summaries: Optional summaries linked to community IDs.
+        :return: Tuple with remapped entities, remapped communities, and remapped summaries.
+        """
+        if not communities:
+            return entities, communities, summaries or []
+
+        existing_keys = await self.community_kv_storage.all_keys()
+        existing_data = await self.community_kv_storage.get_by_ids(existing_keys) if existing_keys else []
+
+        max_cluster_id_by_level: Dict[int, int] = defaultdict(lambda: -1)
+        for row in existing_data:
+            if not row:
+                continue
+            try:
+                level = int(row.get("level"))
+                cluster_id = int(row.get("cluster_id"))
+            except (TypeError, ValueError):
+                continue
+            if cluster_id > max_cluster_id_by_level[level]:
+                max_cluster_id_by_level[level] = cluster_id
+
+        local_ids_by_level: Dict[int, List[int]] = defaultdict(list)
+        for community in communities:
+            level = int(community.level)
+            cluster_id = int(community.cluster_id)
+            local_ids_by_level[level].append(cluster_id)
+
+        local_to_global: Dict[Tuple[int, int], int] = {}
+        for level, local_ids in local_ids_by_level.items():
+            for local_cluster_id in sorted(set(local_ids)):
+                max_cluster_id_by_level[level] += 1
+                local_to_global[(level, local_cluster_id)] = max_cluster_id_by_level[level]
+
+        old_to_new_community_id: Dict[str, str] = {}
+        remapped_communities: List[Community] = []
+        for community in communities:
+            level = int(community.level)
+            local_cluster_id = int(community.cluster_id)
+            global_cluster_id = local_to_global[(level, local_cluster_id)]
+
+            remapped_community = Community(
+                level=level,
+                cluster_id=global_cluster_id,
+                entities=community.entities,
+                relations=community.relations,
+            )
+            if community.id:
+                old_to_new_community_id[str(community.id)] = str(remapped_community.id)
+            remapped_communities.append(remapped_community)
+
+        valid_cluster_pairs: Set[Tuple[int, int]] = {
+            (int(community.level), int(community.cluster_id))
+            for community in remapped_communities
         }
-        await self._vdb_upsert(self.chunk_vector_db, data_for_vdb, "chunks")
 
-    async def _insert_communities(self, communities: List[Community]) -> None:
+        for entity in entities:
+            remapped_memberships: List[Dict[str, Any]] = []
+            seen_memberships: Set[Tuple[int, int]] = set()
+            for membership in entity.clusters:
+                if not isinstance(membership, dict):
+                    continue
+                try:
+                    level = int(membership.get("level"))
+                    local_cluster_id = int(membership.get("cluster_id"))
+                except (TypeError, ValueError):
+                    continue
+
+                global_cluster_id = local_to_global.get((level, local_cluster_id), local_cluster_id)
+                if (level, global_cluster_id) not in valid_cluster_pairs:
+                    continue
+
+                membership_key = (level, global_cluster_id)
+                if membership_key in seen_memberships:
+                    continue
+
+                seen_memberships.add(membership_key)
+                remapped_memberships.append({
+                    "level": level,
+                    "cluster_id": global_cluster_id,
+                })
+            entity.clusters = remapped_memberships
+
+        remapped_summaries: List[CommunitySummary] = []
+        if summaries:
+            for summary in summaries:
+                if summary is None:
+                    continue
+                new_summary_id = old_to_new_community_id.get(str(summary.id), summary.id)
+                remapped_summaries.append(
+                    CommunitySummary(
+                        summary=summary.summary,
+                        id=new_summary_id,
+                    )
+                )
+
+        return entities, remapped_communities, remapped_summaries
+
+    async def upsert_communities(self, communities: List[Community]) -> "Index":
         """
-        Store communities as ids only:
-        community.id -> {
-            "level": int,
-            "cluster_id": int,
-            "entity_ids": [str, ...],
-            "relation_ids": [str, ...]
+        Insert or update communities into KV storage.
+
+        :param communities: Communities to upsert.
+        :return: Self for method chaining.
+        """
+        if not communities:
+            return self
+
+        kv_data = {
+            c.id: {
+                "level": c.level,
+                "cluster_id": c.cluster_id,
+                "entity_ids": sorted({e.id for e in c.entities}),
+                "relation_ids": sorted({r.id for r in c.relations}),
+            }
+            for c in communities
         }
+        await self.community_kv_storage.upsert(kv_data)
+        await self.community_kv_storage.index_done_callback()
+        return self
+
+    async def upsert_summaries(self, summaries: List[CommunitySummary]) -> "Index":
         """
-        if self.community_kv_storage is None:
-            logger.warning("Community KV storage is not initialized.")
-            return
+        Insert or update community summaries into KV storage.
 
-        try:
-            data_for_kv: Dict[str, Dict] = {}
-            for c in communities:
-                data_for_kv[c.id] = {
-                    "level": c.level,
-                    "cluster_id": c.cluster_id,
-                    "entity_ids": self._unique_ids(c.entities),
-                    "relation_ids": self._unique_ids(c.relations),
-                }
-
-            await self.community_kv_storage.upsert(data_for_kv)
-            await self.community_kv_storage.index_done_callback()
-
-        except Exception as e:
-            logger.error(f"Failed to insert communities into KV storage: {e}")
-
-    async def _insert_summaries(self, summaries: List[CommunitySummary]) -> None:
+        :param summaries: Summaries to upsert.
+        :return: Self for method chaining.
         """
-        Store summaries as id -> text.
+        if not summaries:
+            return self
+
+        kv_data = {s.id: s.summary for s in summaries}
+        await self.community_summary_kv_storage.upsert(kv_data)
+        await self.community_summary_kv_storage.index_done_callback()
+        return self
+
+    async def delete_entities(self, entity_ids: List[str]) -> "Index":
         """
-        if self.community_summary_kv_storage is None:
-            logger.warning("Community summary KV storage is not initialized.")
-            return
+        Delete entities from graph and vector DB.
 
-        try:
-            data_for_kv = {s.id: s.summary for s in summaries}
-            await self.community_summary_kv_storage.upsert(data_for_kv)
-            await self.community_summary_kv_storage.index_done_callback()
+        All relations connected to the deleted
+        entities are also removed from the relation vector DB.
 
-        except Exception as e:
-            logger.error(f"Failed to insert community summaries into KV storage: {e}")
+        :param entity_ids: IDs of entities to delete.
+        :return: Self for method chaining.
+        """
+        if not entity_ids:
+            return self
 
-    async def _graph_bulk_upsert(
-            self,
-            backend: BaseGraphStorage,
-            items: Iterable[Any],
-            upsert_fn: Callable[[Any], Awaitable[None]],
-            artifact_label: str,
+        relations_by_node = await self.graph_backend.get_all_edges_for_nodes(entity_ids)
+        relation_ids = self._unique_relation_ids_from_grouped(relations_by_node)
+
+        await self.graph_backend.delete_nodes(entity_ids)
+        await self.entity_vector_db.delete(entity_ids)
+
+        await self.relation_vector_db.delete(relation_ids)
+        await self.relation_vector_db.index_done_callback()
+
+        await self.graph_backend.index_done_callback()
+        await self.entity_vector_db.index_done_callback()
+        await self._update_reverse_indexes(
+            deleted_entity_ids=entity_ids,
+            deleted_relation_ids=relation_ids,
+        )
+        return self
+
+    async def delete_relations(self, edge_specs: List[EdgeSpec]) -> "Index":
+        """
+        Delete relations from graph and vector DB.
+
+        :param edge_specs: List of edge specs ``(subject_id, object_id, relation_id)``.
+        :return: Self for method chaining.
+        """
+        if not edge_specs:
+            return self
+
+        # Fetch relation IDs for vector DB deletion before removing from graph
+        relations = await self.graph_backend.get_edges(edge_specs)
+        found_relation_ids = [r.id for r in relations if r is not None and r.id]
+
+        await self.graph_backend.delete_edges(edge_specs)
+
+        if found_relation_ids:
+            await self.relation_vector_db.delete(found_relation_ids)
+
+        await self.graph_backend.index_done_callback()
+        await self.relation_vector_db.index_done_callback()
+        await self._update_reverse_indexes(deleted_relation_ids=found_relation_ids)
+        return self
+
+    async def delete_chunks(self, chunk_ids: List[str]) -> "Index":
+        """
+        Delete chunks from KV and vector storage.
+
+        :param chunk_ids: IDs of chunks to delete.
+        :return: Self for method chaining.
+        """
+        if not chunk_ids:
+            return self
+
+        affected_entities = await self._find_entities_by_chunk_ids(chunk_ids)
+        entity_ids = [e.id for e in affected_entities]
+        relation_ids = []
+
+        if entity_ids:
+            # Collect relation IDs before graph cascade
+            relations_by_node = await self.graph_backend.get_all_edges_for_nodes(entity_ids)
+            relation_ids = self._unique_relation_ids_from_grouped(relations_by_node)
+
+            await self.graph_backend.delete_nodes(entity_ids)
+            await self.entity_vector_db.delete(entity_ids)
+
+            if relation_ids:
+                await self.relation_vector_db.delete(relation_ids)
+
+        await self.chunks_kv_storage.delete(chunk_ids)
+        await self.chunk_vector_db.delete(chunk_ids)
+
+        await self.chunks_kv_storage.index_done_callback()
+        await self.chunk_vector_db.index_done_callback()
+        if entity_ids:
+            await self.graph_backend.index_done_callback()
+            await self.entity_vector_db.index_done_callback()
+        if relation_ids:
+            await self.relation_vector_db.index_done_callback()
+        await self._update_reverse_indexes(
+            deleted_chunk_ids=chunk_ids,
+            deleted_entity_ids=entity_ids,
+            deleted_relation_ids=relation_ids,
+        )
+        return self
+
+    async def delete_communities(self, community_ids: List[str]) -> "Index":
+        """
+        Delete communities and their summaries from KV storage.
+
+        :param community_ids: IDs of communities to delete.
+        :return: Self for method chaining.
+        """
+        if not community_ids:
+            return self
+
+        await self.community_kv_storage.delete(community_ids)
+        await self.community_summary_kv_storage.delete(community_ids)
+
+        await self.community_kv_storage.index_done_callback()
+        await self.community_summary_kv_storage.index_done_callback()
+        return self
+
+    async def get_entities(self, entity_ids: List[str]) -> List[Optional[Entity]]:
+        """
+        Retrieve entities by their IDs.
+
+        :param entity_ids: Entity IDs to fetch.
+        :return: List of entities (``None`` for missing).
+        """
+        return await self.graph_backend.get_nodes(entity_ids)
+
+    async def get_relations(self, edge_specs: List[EdgeSpec]) -> List[Optional[Relation]]:
+        """
+        Retrieve relations by edge specs.
+
+        :param edge_specs: List of edge specs ``(subject_id, object_id, relation_id)``.
+        :return: List of relations (``None`` for missing).
+        """
+        return await self.graph_backend.get_edges(edge_specs)
+
+    async def get_chunks(self, chunk_ids: List[str]) -> List[Optional[Chunk]]:
+        """
+        Retrieve chunks by their IDs.
+
+        :param chunk_ids: Chunk IDs to fetch.
+        :return: List of chunks (``None`` for missing).
+        """
+        chunk_dicts = await self.chunks_kv_storage.get_by_ids(chunk_ids)
+        result = []
+        for chunk_dict in chunk_dicts:
+            if chunk_dict is None:
+                result.append(None)
+            else:
+                result.append(Chunk(**chunk_dict))
+        return result
+
+    async def get_communities(self, community_ids: List[str]) -> List[Optional[Community]]:
+        """
+        Retrieve communities by their IDs, reconstructing from stored metadata.
+
+        :param community_ids: Community IDs to fetch.
+        :return: List of communities (``None`` for missing).
+        """
+        community_dicts = await self.community_kv_storage.get_by_ids(community_ids)
+        communities = []
+
+        for community_id, community_dict in zip(community_ids, community_dicts):
+            if community_dict is None:
+                communities.append(None)
+                continue
+
+            entity_ids = community_dict.get("entity_ids", [])
+            relation_id_set = set(community_dict.get("relation_ids", []))
+
+            entities = await self.get_entities(entity_ids)
+            all_relations = await self.graph_backend.get_all_edges()
+            relations = [relation for relation in all_relations if relation and relation.id in relation_id_set]
+            entities = [entity for entity in entities if entity]
+            relations = [relation for relation in relations if relation]
+
+            communities.append(Community(
+                id=community_id,
+                level=community_dict["level"],
+                cluster_id=community_dict["cluster_id"],
+                entities=entities,
+                relations=relations,
+            ))
+
+        return communities
+
+    async def query_entities(self, query: str, top_k: int = 20) -> List[Entity]:
+        """
+        Search for entities using semantic similarity.
+
+        :param query: Search query text.
+        :param top_k: Number of results to return.
+        :return: Matching entities.
+        """
+        results = await self.entity_vector_db.query(query, top_k=top_k)
+        entity_ids = [r["id"] for r in results]
+        entities = await self.get_entities(entity_ids)
+        return [e for e in entities if e is not None]
+
+    async def query_relations(self, query: str, top_k: int = 20) -> List[Relation]:
+        """
+        Search for relations using semantic similarity.
+
+        :param query: Search query text.
+        :param top_k: Number of results to return.
+        :return: Matching relations.
+        """
+        results = await self.relation_vector_db.query(query, top_k=top_k)
+        edge_specs: List[EdgeSpec] = [
+            (r["subject"], r["object"], r["id"])
+            for r in results
+        ]
+        relations = await self.get_relations(edge_specs)
+        return [r for r in relations if r is not None]
+
+    async def _validate_relation_endpoints_exist(self, relations: List[Relation]) -> None:
+        """
+        Validate that all relation endpoints exist as entities.
+
+        :param relations: Relations whose subject/object IDs must exist as nodes.
+        :raises ValueError: If at least one referenced entity is missing.
+        """
+        all_entity_ids: set[str] = set()
+        for relation in relations:
+            all_entity_ids.add(relation.subject_id)
+            all_entity_ids.add(relation.object_id)
+
+        existing_entities = await self.graph_backend.get_nodes(list(all_entity_ids))
+        existing_ids = {entity.id for entity in existing_entities if entity is not None}
+        missing_ids = all_entity_ids - existing_ids
+
+        if missing_ids:
+            raise ValueError(
+                f"Cannot insert/update relations referencing non-existent entities: {missing_ids}"
+            )
+
+    async def _get_existing_relations_grouped_by_id(
+        self,
+        relation_ids: Set[str],
+    ) -> Dict[str, List[Relation]]:
+        """
+        Retrieve existing relations grouped by relation ID.
+
+        :param relation_ids: Relation IDs to search in graph storage.
+        :return: Mapping from relation ID to all matching stored relations.
+        """
+        if not relation_ids:
+            return {}
+
+        all_relations = await self.graph_backend.get_all_edges()
+        grouped: Dict[str, List[Relation]] = defaultdict(list)
+        for relation in all_relations:
+            if relation is None or relation.id is None:
+                continue
+            if relation.id in relation_ids:
+                grouped[relation.id].append(relation)
+        return dict(grouped)
+
+    @staticmethod
+    def _unique_description_fragments(descriptions: Iterable[str]) -> List[str]:
+        """
+        Split descriptions into normalized fragments and keep first-seen unique ones.
+
+        This prevents repeated sentence fragments when previously merged descriptions
+        are merged again with incremental upserts.
+
+        :param descriptions: Description texts to split and normalize.
+        :return: Deduplicated description fragments in first-seen order.
+        """
+        unique_parts: List[str] = []
+        seen: set[str] = set()
+
+        for description in descriptions:
+            text = (description or "").strip()
+            if not text:
+                continue
+            raw_parts = re.split(r"\n+|(?<=[.!?])\s+", text)
+            for part in raw_parts:
+                cleaned = re.sub(r"\s+", " ", part).strip()
+                if not cleaned:
+                    continue
+                key = cleaned.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique_parts.append(cleaned)
+
+        return unique_parts
+
+    @staticmethod
+    def _merge_entities(entity_groups: Dict[str, List[Entity]]) -> List[Entity]:
+        """
+        Merge entities sharing the same ID by combining descriptions and metadata.
+
+        :param entity_groups: Mapping of entity ID to list of entities.
+        :return: One merged entity per ID.
+        """
+        merged = []
+
+        for entities in entity_groups.values():
+            if len(entities) == 1:
+                merged.append(entities[0])
+                continue
+
+            by_richness = sorted(entities, key=lambda e: len(e.source_chunk_id), reverse=True)
+            primary = by_richness[0]
+
+            descriptions = Index._unique_description_fragments(
+                [e.description for e in by_richness]
+            )
+
+            all_chunks = set()
+            all_docs = set()
+            all_clusters = []
+            for e in by_richness:
+                all_chunks.update(e.source_chunk_id)
+                all_docs.update(e.documents_id)
+                all_clusters.extend(e.clusters)
+
+            deduplicated_clusters: List[Dict[str, Any]] = []
+            seen_cluster_keys: Set[Tuple[int, str]] = set()
+            for cluster in all_clusters:
+                if not isinstance(cluster, dict):
+                    continue
+                try:
+                    level = int(cluster.get("level"))
+                    cluster_id = str(cluster.get("cluster_id"))
+                except (TypeError, ValueError):
+                    continue
+
+                cluster_key = (level, cluster_id)
+                if cluster_key in seen_cluster_keys:
+                    continue
+
+                seen_cluster_keys.add(cluster_key)
+                normalized_cluster = {"level": level, "cluster_id": cluster_id}
+                for key, value in cluster.items():
+                    if key not in normalized_cluster:
+                        normalized_cluster[key] = value
+                deduplicated_clusters.append(normalized_cluster)
+
+            merged.append(Entity(
+                id=primary.id,
+                entity_name=primary.entity_name,
+                entity_type=primary.entity_type,
+                description=" ".join(descriptions),
+                source_chunk_id=sorted(all_chunks),
+                documents_id=sorted(all_docs),
+                clusters=deduplicated_clusters,
+            ))
+
+        return merged
+
+    @staticmethod
+    def _merge_relations(relation_groups: Dict[str, List[Relation]]) -> List[Relation]:
+        """
+        Merge duplicate relations by combining descriptions and averaging strength.
+
+        For each group, the relation with the most source chunks becomes the primary.
+        Unique descriptions are concatenated; relation_strength is averaged;
+        source_chunk_ids are unioned.
+
+        :param relation_groups: Mapping of relation ID to list of duplicates.
+        :return: One merged relation per group.
+        """
+        merged = []
+
+        for relations in relation_groups.values():
+            if len(relations) == 1:
+                merged.append(relations[0])
+                continue
+
+            by_richness = sorted(relations, key=lambda r: len(r.source_chunk_id), reverse=True)
+            primary = by_richness[0]
+
+            descriptions = Index._unique_description_fragments(
+                [r.description for r in by_richness]
+            )
+
+            avg_strength = sum(r.relation_strength for r in by_richness) / len(by_richness)
+
+            all_chunks = set()
+            for r in by_richness:
+                all_chunks.update(r.source_chunk_id)
+
+            merged.append(Relation(
+                id=primary.id,
+                subject_id=primary.subject_id,
+                object_id=primary.object_id,
+                subject_name=primary.subject_name,
+                object_name=primary.object_name,
+                relation_type=primary.relation_type,
+                description=" ".join(descriptions),
+                relation_strength=avg_strength,
+                source_chunk_id=sorted(all_chunks),
+            ))
+
+        return merged
+
+    async def _update_reverse_indexes(
+        self,
+        entities: Optional[List[Entity]] = None,
+        relations: Optional[List[Relation]] = None,
+        deleted_entity_ids: Optional[List[str]] = None,
+        deleted_relation_ids: Optional[List[str]] = None,
+        deleted_chunk_ids: Optional[List[str]] = None,
     ) -> None:
-        if not items:
-            return
+        """
+        Incrementally update reverse indexes from changed entities/relations.
 
-        try:
-            await backend.index_start_callback()
-            await asyncio.gather(*(upsert_fn(item) for item in items))
-        except Exception as e:
-            logger.error(f"Failed to insert {artifact_label} into graph: {e}")
-        finally:
-            await backend.index_done_callback()
+        :param entities: Upserted entities to add to chunk-to-entity index.
+        :param relations: Upserted relations to add to chunk-to-relation index.
+        :param deleted_entity_ids: Entity IDs removed from the graph.
+        :param deleted_relation_ids: Relation IDs removed from the graph.
+        :param deleted_chunk_ids: Chunk IDs removed from KV/vector storage.
+        """
+        if deleted_chunk_ids:
+            for chunk_id in deleted_chunk_ids:
+                self._chunk_to_entities.pop(chunk_id, None)
+                self._chunk_to_relations.pop(chunk_id, None)
 
-    async def _vdb_upsert(
-            self,
-            storage: Optional[BaseVectorStorage],
-            payload: Dict[str, Dict],
-            artifact_label: str,
-    ) -> None:
-        if storage is None:
-            logger.warning("Vector database storage is not initialized.")
-            return
-        if not payload:
-            return
+        if deleted_entity_ids:
+            removed_entities = set(deleted_entity_ids)
+            for chunk_id, entity_ids in list(self._chunk_to_entities.items()):
+                entity_ids.difference_update(removed_entities)
+                if not entity_ids:
+                    self._chunk_to_entities.pop(chunk_id, None)
 
-        try:
-            await storage.upsert(payload)  # type: ignore[arg-type]
-        except Exception as e:
-            logger.error(f"Failed to insert {artifact_label} into vector DB: {e}")
-        finally:
-            await storage.index_done_callback()  # type: ignore[func-returns-value]
+        if deleted_relation_ids:
+            removed_relations = set(deleted_relation_ids)
+            for chunk_id, relation_ids in list(self._chunk_to_relations.items()):
+                relation_ids.difference_update(removed_relations)
+                if not relation_ids:
+                    self._chunk_to_relations.pop(chunk_id, None)
+
+        if entities:
+            entities_map = self._get_items_map(entities)
+            for chunk_id, entity_ids in entities_map.items():
+                self._chunk_to_entities[chunk_id].update(entity_ids)
+
+        if relations:
+            relations_map = self._get_items_map(relations)
+            for chunk_id, relation_ids in relations_map.items():
+                self._chunk_to_relations[chunk_id].update(relation_ids)
+
+    async def _rebuild_reverse_indexes(self) -> None:
+        """
+        Rebuild reverse indexes by scanning graph data once.
+
+        Used as fallback for cold-start consistency with preloaded graphs.
+        """
+        self._chunk_to_entities.clear()
+        self._chunk_to_relations.clear()
+
+        all_entities = await self.graph_backend.get_all_nodes()
+        all_relations = await self.graph_backend.get_all_edges()
+
+        await self._update_reverse_indexes(
+            entities=all_entities,
+            relations=all_relations,
+        )
+
+    async def _find_entities_by_chunk_ids(self, chunk_ids: List[str]) -> List[Entity]:
+        """
+        Find all entities referencing any of the given chunk IDs.
+
+        :param chunk_ids: Chunk identifiers.
+        :return: Entities referencing these chunks.
+        """
+        if not self._chunk_to_entities:
+            await self._rebuild_reverse_indexes()
+
+        entity_ids = set()
+        for chunk_id in chunk_ids:
+            entity_ids.update(self._chunk_to_entities.get(chunk_id, set()))
+
+        entities = await self.graph_backend.get_nodes(list(entity_ids))
+        return [e for e in entities if e is not None]
+
+    @staticmethod
+    def _get_items_map(items: List[Entity] | List[Relation]) -> Dict[str, List[str]]:
+        """
+        Build reverse mapping chunk_id -> list of item IDs using source_chunk_id.
+
+        :param items: Entities or relations with ``id`` and ``source_chunk_id`` fields.
+        :return: Mapping from chunk ID to list of entity/relation IDs.
+        """
+        chunks_map: Dict[str, List[str]] = defaultdict(list)
+        for item in items:
+            if not item or not item.id:
+                continue
+            for chunk_id in getattr(item, "source_chunk_id", []):
+                chunks_map[chunk_id].append(item.id)
+        return dict(chunks_map)
+
+    @staticmethod
+    def _unique_relation_ids_from_grouped(relations_by_node: List[List[Relation]]) -> List[str]:
+        """
+        Flatten grouped relations and return unique relation IDs (first-seen order).
+
+        :param relations_by_node: Relations grouped by source node.
+        :return: Unique relation IDs preserving first-seen order.
+        """
+        relation_ids: List[str] = []
+        seen: Set[str] = set()
+        for relations in relations_by_node:
+            for relation in relations:
+                relation_id = getattr(relation, "id", None)
+                if not relation_id or relation_id in seen:
+                    continue
+                seen.add(relation_id)
+                relation_ids.append(relation_id)
+        return relation_ids
 
     @staticmethod
     def _build_storage_kwargs(
@@ -329,20 +1065,17 @@ class Index:
             filename: str,
             provided_kwargs: Optional[Dict] = None,
     ) -> Dict:
+        """
+        Build effective storage kwargs and ensure a default absolute ``filename``.
+
+        :param storage_folder: Base folder for storage files.
+        :param filename: Default storage filename.
+        :param provided_kwargs: Optional custom kwargs from user configuration.
+        :return: Final kwargs dictionary for storage backend initialization.
+        """
         kwargs = dict(provided_kwargs or {})
         kwargs.setdefault(
             "filename",
             os.path.abspath(os.path.join(storage_folder, filename)),
         )
         return kwargs
-
-    @staticmethod
-    def _unique_ids(items: Iterable[Any]) -> List[str]:
-        ids: List[str] = []
-        seen = set()
-        for item in items:
-            item_id = getattr(item, "id", str(item))
-            if item_id not in seen:
-                ids.append(item_id)
-                seen.add(item_id)
-        return ids

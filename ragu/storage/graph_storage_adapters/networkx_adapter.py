@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import os
-import asyncio
-from collections import defaultdict
 from dataclasses import asdict
 from typing import (
     Any,
@@ -10,16 +8,12 @@ from typing import (
     Iterable,
     List,
     Optional,
-    Tuple,
-    Hashable
 )
 
 import networkx as nx
-from graspologic.partition import HierarchicalClusters, hierarchical_leiden
-from graspologic.utils import largest_connected_component
 
-from ragu.graph.types import Entity, Relation, Community
-from ragu.storage.base_storage import BaseGraphStorage
+from ragu.graph.types import Entity, Relation
+from ragu.storage.base_storage import BaseGraphStorage, EdgeSpec
 
 
 def _entity_to_attrs(e: Entity) -> Dict[str, Any]:
@@ -32,46 +26,55 @@ def _entity_to_attrs(e: Entity) -> Dict[str, Any]:
         clusters=list(e.clusters),
     )
 
-
-def _attrs_to_entity(node_id: str, d: Dict[str, Any]) -> Entity:
-    return Entity(
-        id=node_id,
-        entity_name=d.get("entity_name", str(node_id)),
-        entity_type=d.get("entity_type", "Unknown"),
-        description=d.get("description", ""),
-        source_chunk_id=list(d.get("source_chunk_id", [])),
-        documents_id=list(d.get("documents_id", [])),
-        clusters=list(d.get("clusters", [])),
-    )
-
-
 class NetworkXStorage(BaseGraphStorage):
     """
     NetworkX-based implementation of :class:`BaseGraphStorage`.
 
     This class provides a lightweight, file-backed storage interface for
     entities and relations using NetworkX as the underlying graph structure.
-    Supports node/edge CRUD operations, clustering, and persistence.
+    Supports node/edge CRUD operations and persistence.
     """
 
     def __init__(
         self,
         filename: str,
-        clustering_params=None,
         **kwargs,
     ):
         """
         Initialize a new :class:`NetworkXStorage`.
 
         :param filename: Path to a `.gml` file used for persistence.
-        :param clustering_params: Optional parameters for community detection.
         """
-        if clustering_params is None:
-            clustering_params = {"max_community_size": 1000}
-
-        self._graph: nx.Graph = nx.read_gml(filename) if os.path.exists(filename) else nx.Graph()
+        loaded = nx.read_gml(filename) if os.path.exists(filename) else nx.MultiGraph()
+        self._graph: nx.MultiGraph = loaded if isinstance(loaded, nx.MultiGraph) else nx.MultiGraph(loaded)
         self._where_to_save = filename
-        self._clustering_params = clustering_params
+
+    @staticmethod
+    def _entity_from_node(entity_id: str, metadata: Dict[str, Any]) -> Entity:
+        return Entity(
+            id=entity_id,
+            entity_name=metadata.get("entity_name"),
+            entity_type=metadata.get("entity_type"),
+            description=metadata.get("description", ""),
+            source_chunk_id=list(metadata.get("source_chunk_id", [])),
+            clusters=metadata.get("clusters", []),
+        )
+
+    @staticmethod
+    def _relation_from_edge(u: str, v: str, key: Any, metadata: Dict[str, Any]) -> Relation:
+        subject_id = str(u)
+        object_id = str(v)
+        return Relation(
+            subject_id=subject_id,
+            object_id=object_id,
+            subject_name=metadata.get("subject_name", subject_id),
+            object_name=metadata.get("object_name", object_id),
+            relation_type=metadata.get("relation_type", "UNKNOWN"),
+            description=metadata.get("description", ""),
+            relation_strength=float(metadata.get("relation_strength", 1.0)),
+            source_chunk_id=list(metadata.get("source_chunk_id", [])),
+            id=str(metadata.get("id", key)),
+        )
 
     async def index_done_callback(self) -> None:
         """
@@ -107,144 +110,27 @@ class NetworkXStorage(BaseGraphStorage):
             return []
 
         relations: List[Relation] = []
-        for u, v, metadata in self._graph.edges(source_node_id, data=True):
-            subject_id = str(u)
-            object_id = str(v)
-            subject_name = self._graph.nodes.get(u, {}).get("entity_name", subject_id)
-            object_name = self._graph.nodes.get(v, {}).get("entity_name", object_id)
-            relation = Relation(
-                subject_id=subject_id,
-                object_id=object_id,
-                subject_name=subject_name,
-                object_name=object_name,
-                description=metadata.get("description", ""),
-                relation_strength=float(metadata.get("relation_strength", 1.0)),
-                source_chunk_id=list(metadata.get("source_chunk_id", [])),
-                id=metadata.get("id"),
-            )
+        for u, v, key, metadata in self._graph.edges(source_node_id, keys=True, data=True):
+            relation = self._relation_from_edge(str(u), str(v), key, metadata)
             relations.append(relation)
 
-        seen: set[Tuple[str, str]] = set()
-        unique_relations: List[Relation] = []
-        for r in relations:
-            key = tuple(sorted((r.subject_id, r.object_id)))
-            if key in seen:
-                continue
-            seen.add(key)
-            unique_relations.append(r)
-        return unique_relations
+        return relations
 
-    # TODO: add calculating
-    async def get_edge_degree(self, source_node_id: str, target_node_id: str) -> int:
+    async def edges_degrees(self, edge_specs: List[EdgeSpec]) -> List[int]:
         """
-        Return the degree or strength of a specific edge.
+        Retrieve degree values for multiple edges.
 
-        :param source_node_id: Source node ID.
-        :param target_node_id: Target node ID.
-        :return: Edge degree or weight (0 if not defined).
+        For each edge spec, returns ``degree(subject_id) + degree(object_id)``.
+        Returns ``0`` when the relation or either endpoint is missing.
         """
-        return 0
-
-    async def upsert_edge(self, edge: Relation) -> None:
-        """
-        Insert or update an edge in the graph.
-
-        :param edge: The relation to add or update.
-        """
-        edge_data = asdict(edge)
-        edge_data.pop("subject_id", None)
-        edge_data.pop("object_id", None)
-        self._graph.add_edge(edge.subject_id, edge.object_id, **edge_data)
-
-    async def get_edge(self, source_node_id: str, target_node_id: str) -> Relation | None:
-        """
-        Retrieve a single edge between two nodes if it exists.
-
-        :param source_node_id: Source node ID.
-        :param target_node_id: Target node ID.
-        :return: Relation object or ``None`` if no edge exists.
-        """
-        if not self._graph.has_edge(source_node_id, target_node_id):
-            return None
-
-        data = self._graph.edges[source_node_id, target_node_id]
-        return Relation(
-            source_node_id,
-            target_node_id,
-            **data
-        )
-
-    async def has_node(self, node_id: Hashable) -> bool:
-        """
-        Check whether a node exists in the graph.
-
-        :param node_id: Node identifier.
-        :return: ``True`` if node exists, otherwise ``False``.
-        """
-        return self._graph.has_node(node_id)
-
-    async def has_edge(self, src: Hashable, dst: Hashable) -> bool:
-        """
-        Check whether an edge exists between two nodes.
-
-        :param src: Source node ID.
-        :param dst: Destination node ID.
-        :return: ``True`` if edge exists, otherwise ``False``.
-        """
-        return self._graph.has_edge(src, dst)
-
-    async def node_degree(self, node_id: Hashable) -> int:
-        """
-        Return the degree (number of adjacent edges) of a node.
-
-        :param node_id: Node identifier.
-        :return: Node degree as integer.
-        """
-        return int(self._graph.degree(node_id))  # type: ignore
-
-    async def get_node(self, node_id: str) -> Optional[Entity]:
-        """
-        Retrieve a node as an :class:`Entity` object.
-
-        :param node_id: Node identifier.
-        :return: The corresponding entity or ``None`` if not found.
-        """
-        if not self._graph.has_node(node_id):
-            return None
-        data = self._graph.nodes[node_id]
-        return Entity(id=node_id, **data)
-
-    async def neighbors(self, node_id: Hashable, rel_types: Optional[List[str]] = None) -> List[Entity]:
-        """
-        Return all neighboring nodes (entities) connected to a given node.
-
-        :param node_id: Node identifier.
-        :type node_id: Hashable
-        :param rel_types: Optional list of relation types to filter edges.
-        :type rel_types: list[str] | None
-        :return: List of neighboring entities.
-        :rtype: list[Entity]
-        """
-        out: List[Entity] = []
-        if not self._graph.has_node(node_id):
-            return out
-        for nbr in self._graph.neighbors(node_id):
-            if rel_types is not None:
-                d = self._graph.edges[node_id, nbr]
-                if d.get("type") not in rel_types:
-                    continue
-            out.append(_attrs_to_entity(nbr, self._graph.nodes[nbr]))
-        return out
-
-    async def upsert_node(self, node: Entity) -> None:
-        """
-        Insert or update a node (entity) in the graph.
-
-        :param node: Entity object to insert or update.
-        :type node: Entity
-        """
-        attrs = _entity_to_attrs(node)
-        self._graph.add_node(node.id, **attrs)
+        degrees: List[int] = []
+        for subject_id, object_id, relation_id in edge_specs:
+            degree = (
+                (self._graph.degree(subject_id) if self._graph.has_node(subject_id) else 0)
+                + (self._graph.degree(object_id) if self._graph.has_node(object_id) else 0)
+            )
+            degrees.append(degree)
+        return degrees
 
     async def upsert_nodes(self, nodes: Iterable[Entity]) -> None:
         """
@@ -253,113 +139,167 @@ class NetworkXStorage(BaseGraphStorage):
         :param nodes: Iterable of entities to process.
         :type nodes: Iterable[Entity]
         """
-        for n in nodes:
-            await self.upsert_node(n)
+        for node in nodes:
 
-    async def remove_node(self, node_id: Hashable, cascade: bool = True) -> None:
+            attrs = _entity_to_attrs(node)
+            self._graph.add_node(node.id, **attrs)
+
+    async def get_nodes(self, node_ids: List[str]) -> List[Optional[Entity]]:
         """
-        Remove a node from the graph.
+        Retrieve multiple nodes by their IDs.
 
-        :param node_id: Node identifier.
-        :type node_id: Hashable
-        :param cascade: Whether to also remove connected edges (default: True).
-        :type cascade: bool
+        :param node_ids: List of node identifiers to fetch.
+        :type node_ids: List[str]
+        :return: List of entities (``None`` for missing nodes).
+        :rtype: List[Optional[Entity]]
         """
-        if self._graph.has_node(node_id):
-            self._graph.remove_node(node_id)
+        results: List[Optional[Entity]] = []
+        for node_id in node_ids:
+            if not self._graph.has_node(node_id):
+                results.append(None)
+                continue
+            data = self._graph.nodes[node_id]
+            results.append(Entity(id=node_id, **data))
+        return results
 
-    async def remove_edge(self, src: Hashable, dst: Hashable) -> None:
+    async def delete_nodes(self, node_ids: List[str]) -> None:
         """
-        Remove an edge between two nodes.
+        Delete multiple nodes from the graph.
 
-        :param src: Source node ID.
-        :type src: Hashable
-        :param dst: Destination node ID.
-        :type dst: Hashable
+        Cascade removes all connected edges.
+
+        :param node_ids: List of node identifiers to remove.
+        :type node_ids: List[str]
         """
-        if self._graph.has_edge(src, dst):
-            self._graph.remove_edge(src, dst)
+        for node_id in node_ids:
+            if self._graph.has_node(node_id):
+                self._graph.remove_node(node_id)
 
-    async def remove_isolated_nodes(self) -> None:
+    async def get_edges(self, edge_specs: List[EdgeSpec]) -> List[Optional[Relation]]:
         """
-        Remove nodes with no edges from the graph.
+        Retrieve multiple edges by specs.
+
+        :param edge_specs: List of edge specs ``(subject_id, object_id, relation_id)``.
+        :type edge_specs: List[EdgeSpec]
+        :return: List of relations (``None`` for missing edges).
+        :rtype: List[Optional[Relation]]
         """
-        for node in list(self._graph.nodes):
-            if self._graph.degree(node) == 0:
-                self._graph.remove_node(node)
+        results: List[Optional[Relation]] = []
+        for spec in edge_specs:
+            u, v, key = spec
 
-    async def connected_components(self, mode: str = "weak") -> List[List[Hashable]]:
-        """
-        Compute connected components of the graph.
-
-        :param mode: Component mode, e.g., ``"weak"`` or ``"strong"`` (ignored for undirected graphs).
-        :type mode: str
-        :return: List of connected components, each as a list of node IDs.
-        :rtype: list[list[Hashable]]
-        """
-        comps = nx.connected_components(self._graph)
-        return [list(c) for c in comps]
-
-    async def take_only_largest_component(self) -> "NetworkXStorage":
-        """
-        Retain only the largest connected component in the graph.
-
-        :return: The current storage instance with filtered graph.
-        """
-        self._graph = largest_connected_component(self._graph)
-        return self
-
-    async def cluster(self) -> list[Community]:
-        """
-        Perform hierarchical Leiden clustering to identify communities in the graph.
-
-        :return: List of detected communities.
-        """
-        community_mapping: HierarchicalClusters = hierarchical_leiden(
-            self._graph,
-            **self._clustering_params
-        )
-
-        clusters = defaultdict(lambda: defaultdict(lambda: {"nodes": set(), "edges": set()}))
-        node_membership = defaultdict(set)  # node -> {(level, cluster_id)}
-
-        for part in community_mapping:
-            level = part.level
-            cid = part.cluster
-            node = part.node
-
-            self._graph.nodes[node]["clusters"].append({"level": level, "cluster_id": cid})
-            clusters[level][cid]["nodes"].add(node)
-            node_membership[node].add((level, cid))
-
-        for u, v in self._graph.edges:
-            common = node_membership[u].intersection(node_membership[v])
-            if not common:
+            if not self._graph.has_edge(u, v):
+                results.append(None)
                 continue
 
-            a, b = (u, v) if u <= v else (v, u)
-            for level, cid in common:
-                clusters[level][cid]["edges"].add((a, b))
+            matches = self._graph.get_edge_data(u, v)
+            if key:
+                matches = [matches.get(key, {})]
+            else:
+                matches = list(matches.values())
 
-        communities: List[Community] = []
-        for level, buckets in clusters.items():
-            for cid, payload in buckets.items():
-                nodes = payload["nodes"]
-                edges = payload["edges"]
+            for edge_data in matches:
+                if not edge_data:
+                    continue
+                payload = dict(edge_data)
+                payload["subject_id"] = u
+                payload["object_id"] = v
+                relation = Relation(**payload)
+                results.append(relation)
+        return results
 
-                entities = await asyncio.gather(*[self.get_node(n) for n in nodes])
-                entities = [node for node in entities if node is not None]
+    async def upsert_edges(self, edges: List[Relation]) -> None:
+        """
+        Insert or update multiple edges in the graph.
 
-                relations = await asyncio.gather(*[self.get_edge(source, target) for (source, target) in edges])
-                relations = [relation for relation in relations if relation is not None]
+        :param edges: List of relations to upsert.
+        :type edges: List[Relation]
+        """
+        for edge in edges:
+            edge_data = asdict(edge)
+            edge_data.pop("subject_id", None)
+            edge_data.pop("object_id", None)
+            edge_key = edge.id
+            self._graph.add_edge(edge.subject_id, edge.object_id, key=edge_key, **edge_data)
 
-                communities.append(
-                    Community(
-                        entities=entities,
-                        relations=relations,
-                        level=level,
-                        cluster_id=cid,
-                    )
-                )
+    async def delete_edges(self, edge_specs: List[EdgeSpec]) -> None:
+        """
+        Delete multiple edges from the graph.
 
-        return communities
+        :param edge_specs: List of edge specs (subject_id, object_id, relation_id).
+        :type edge_specs: List[EdgeSpec]
+        """
+        for spec in edge_specs:
+            u, v, key = spec
+            if not self._graph.has_edge(u, v):
+                raise ValueError(f"There's no edge between {u} and {v}")
+
+            if key is not None:
+                self._graph.remove_edge(u, v, key=key)
+                continue
+
+            edge_dict = self._graph.get_edge_data(u, v, default={})
+            keys_to_remove = list(edge_dict.keys())
+
+            for k in keys_to_remove:
+                self._graph.remove_edge(u, v, key=k)
+
+    async def get_all_edges_for_nodes(self, node_ids: List[str]) -> List[List[Relation]]:
+        """
+        Retrieve edges for each given node.
+
+        Returns one relation list per input node ID. No cross-node deduplication
+        is performed.
+
+        :param node_ids: List of node identifiers.
+        :type node_ids: List[str]
+        :return: Grouped relations for each node.
+        :rtype: List[List[Relation]]
+        """
+        grouped_relations: List[List[Relation]] = []
+
+        for node_id in node_ids:
+            node_relations: List[Relation] = []
+            if not self._graph.has_node(node_id):
+                grouped_relations.append(node_relations)
+                continue
+
+            for u, v, key, metadata in self._graph.edges(node_id, keys=True, data=True):
+                relation = self._relation_from_edge(str(u), str(v), key, metadata)
+                relation.subject_name = self._graph.nodes.get(u, {}).get("entity_name", relation.subject_id)
+                relation.object_name = self._graph.nodes.get(v, {}).get("entity_name", relation.object_id)
+                node_relations.append(relation)
+
+            grouped_relations.append(node_relations)
+
+        return grouped_relations
+
+    async def get_all_nodes(self) -> List[Entity]:
+        """
+        Retrieve all nodes in the graph.
+
+        :return: List of all entities.
+        :rtype: List[Entity]
+        """
+        entities: List[Entity] = []
+        for node_id in self._graph.nodes():
+            entity = self._entity_from_node(node_id, dict(self._graph[node_id]))
+            entities.append(entity)
+        return entities
+
+    async def get_all_edges(self) -> List[Relation]:
+        """
+        Retrieve all edges in the graph.
+
+        :return: List of all relations.
+        :rtype: List[Relation]
+        """
+        relations: List[Relation] = []
+
+        for u, v, key, metadata in self._graph.edges(keys=True, data=True):
+            relation = self._relation_from_edge(str(u), str(v), key, metadata)
+            relation.subject_name = self._graph.nodes.get(u, {}).get("entity_name", relation.subject_id)
+            relation.object_name = self._graph.nodes.get(v, {}).get("entity_name", relation.object_id)
+            relations.append(relation)
+
+        return relations

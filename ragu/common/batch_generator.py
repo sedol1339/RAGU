@@ -1,17 +1,17 @@
 import math
-from typing import Generator, List
+from typing import Generator, List, TypeVar, Sequence
 
-
+T = TypeVar("T")
 class BatchGenerator:
     """
     A utility class for generating batches of data.
     """
 
-    def __init__(self, data: List, batch_size: int):
+    def __init__(self, data: Sequence[T], batch_size: int):
         """
         Initializes the BatchGenerator.
 
-        :param data: A list of strings representing the dataset.
+        :param data: A sequence of strings representing the dataset.
         :param batch_size: The number of elements in each batch.
         """
         self.data = data

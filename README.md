@@ -1,4 +1,11 @@
-# RAGU:  Retrieval-Augmented Graph Utility
+
+<h1 align="center">RAGU: Retrieval-Augmented Graph Utility</h1>
+
+---
+
+<p align="center">
+<img src="assets/ragu_image.jpg" alt="RAGU logo" width="600" />
+</p>
 
 <h4 align="center">
   <a href="https://github.com/AsphodelRem/RAGU/blob/main/LICENSE">
@@ -11,6 +18,8 @@
   <a href="#install">Install</a> |
   <a href="#quickstart">Quickstart</a> 
 </h4>
+
+---
 
 
 ## Overview
@@ -49,61 +58,77 @@ pip install graph_ragu[local]
 ```python
 import asyncio
 
-from ragu.chunker import SimpleChunker
-from ragu.embedder import STEmbedder
-from ragu.graph import KnowledgeGraph, InMemoryGraphBuilder
-
+from ragu import (
+    SimpleChunker,
+    KnowledgeGraph,
+    BuilderArguments,
+    Settings,
+    ArtifactsExtractorLLM,
+)
 from ragu.llm import OpenAIClient
+from ragu.embedder import OpenAIEmbedder
 
-from ragu.storage import Index
-from ragu.triplet import ArtifactsExtractorLLM
 from ragu.utils.ragu_utils import read_text_from_files
 
-LLM_MODEL_NAME = "..."
-LLM_BASE_URL = "..."
-LLM_API_KEY = "..."
+# Configuration (or use ragu.Env for loading from .env)
+LLM_MODEL_NAME = "openai/gpt-4o-mini"
+LLM_BASE_URL = "https://api.openai.com/v1"
+LLM_API_KEY = "your-api-key-here"
+
+EMBEDDER_MODEL_NAME = "text-embedding-3-large"
 
 
 async def main():
-    # Load .txt documents from folder
-    docs = read_text_from_files("/path/to/files")
+    # Configure working directory and language
+    Settings.storage_folder = "ragu_working_dir"
+    Settings.language = "english"  # or "russian"
 
-    # Choose chunker 
-    chunker = SimpleChunker(max_chunk_size=2048, overlap=0)
+    # Load documents from folder
+    docs = read_text_from_files("path/to/your/data")
 
-    # Import LLM client
+    # Initialize chunker
+    chunker = SimpleChunker(max_chunk_size=1000)
+
+    # Set up LLM client
     client = OpenAIClient(
-        LLM_MODEL_NAME,
-        LLM_BASE_URL,
-        LLM_API_KEY,
+        model_name=LLM_MODEL_NAME,
+        base_url=LLM_BASE_URL,
+        api_token=LLM_API_KEY,
         max_requests_per_second=1,
-        max_requests_per_minute=60
+        max_requests_per_minute=60,
+        cache_flush_every=10,
     )
 
-    # Set up artifacts extractor
+    # Set up artifact extractor
     artifact_extractor = ArtifactsExtractorLLM(
         client=client,
-        do_validation=True
+        do_validation=False
     )
 
-    # Initialize your embedder
-    embedder = STEmbedder(
-        "Alibaba-NLP/gte-multilingual-base",
-        trust_remote_code=True
-    )
-    # Set up graph storage and graph builder pipeline
-    pipeline = InMemoryGraphBuilder(client, chunker, artifact_extractor)
-    index = Index(
-        embedder,
-        graph_storage_kwargs={"clustering_params": {"max_cluster_size": 6}}
+    # Initialize embedder
+    embedder = OpenAIEmbedder(
+        model_name=EMBEDDER_MODEL_NAME,
+        base_url=LLM_BASE_URL,
+        api_token=LLM_API_KEY,
+        dim=3072,
+        max_requests_per_second=1,
+        max_requests_per_minute=60,
+        use_cache=True,
     )
 
-    # Build KG
+    # Configure builder settings
+    builder_settings = BuilderSettings(
+        use_llm_summarization=True,
+        vectorize_chunks=True,
+    )
+
+    # Build knowledge graph
     knowledge_graph = await KnowledgeGraph(
-        extraction_pipeline=pipeline,  # Pass pipeline
-        index=index,  # Pass storage
-        make_community_summary=True,  # Generate community summary if you want
-        language="russian",  # You can set preferred language
+        client=client,
+        embedder=embedder,
+        chunker=chunker,
+        artifact_extractor=artifact_extractor,
+        builder_settings=builder_settings,
     ).build_from_docs(docs)
 
 
@@ -111,27 +136,102 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### Example of querying
-```python
-from ragu.search_engine import LocalSearchEngine
+> If you run the code with a storage folder that already contains a knowledge graph, RAGU will automatically load the existing graph.
 
-search_engine = LocalSearchEngine(
+
+### Example of querying
+
+**Local search**
+Search over entities retrieved for the query and their connected context (relations, summaries, and chunks).
+```python
+from ragu import LocalSearchEngine
+
+local_search = LocalSearchEngine(
     client,
     knowledge_graph,
-    embedder
+    embedder,
+    tokenizer_model="gpt-4o-mini",
 )
-
-# Find relevant local context for the query
-print(await search_engine.a_search("Как переводится роман 'Ка́мо гряде́ши, Го́споди?'"))
-
-# Or just past the query ang get final answer
-print(await search_engine.a_query("Как переводится роман 'Ка́мо гряде́ши, Го́споди?'"))
-
-# Output:
-# [DefaultResponseModel(response="Роман 'Ка́мо гряде́ши, Го́споди?' переводится как 'Куда Ты идёшь, Господи?'")]
-# :)
+local_answer = await local_search.a_query("Who wrote Romeo and Juliet?")
+print(local_answer)
 ```
 
+#### Global search
+Give an answer by community summaries.
+```python
+from ragu import GlobalSearchEngine
+
+global_search = GlobalSearchEngine(
+    client=client,
+    knowledge_graph=knowledge_graph,
+)
+global_answer = await global_search.a_query("Your broad query here")
+print(global_answer)
+```
+
+**Naive search (vector RAG):**
+```python
+from ragu import NaiveSearchEngine
+
+naive_search = NaiveSearchEngine(
+    client=client,
+    knowledge_graph=knowledge_graph,
+    embedder=embedder,
+)
+naive_answer = await naive_search.a_query("Your query here")
+print(naive_answer)
+```
+
+### Query planning wrapper
+Decomposes complex questions into dependent subqueries, executes them in order, and uses intermediate answers to produce a final response.
+```python
+from ragu import QueryPlanEngine
+
+# Wrap any base engine
+planned_local = QueryPlanEngine(local_search)
+result = await planned_local.a_query("What is the capital of France?")
+print(result)
+
+planned_global = QueryPlanEngine(global_search)
+result = await planned_global.a_query("Your broad query here")
+print(result)
+
+planned_naive = QueryPlanEngine(naive_search)
+result = await planned_naive.a_query("Your query here")
+print(result)
+```
+
+---
+
+### Advanced Configuration
+
+#### Builder Settings
+
+Configure the knowledge graph building pipeline using `BuilderSettings`:
+
+```python
+from ragu import BuilderArguments
+
+builder_arguments = BuilderArguments(
+    use_llm_summarization=True,  # Enable LLM-based entity/relation summarization
+    use_clustering=False,  # Apply clustering before summarization. Use it if your text contains many similar entities.
+    build_only_vector_context=False,  # Skip graph extraction, only chunk embeddings
+    make_community_summary=True,  # Generate community summaries 
+    remove_isolated_nodes=True,  # Remove entities without relations
+    vectorize_chunks=True,  # Vectorize chunk for naive (vector) search
+    cluster_only_if_more_than=10000,  # Minimum entities before clustering kicks in
+    max_cluster_size=128,  # Maximum entities per cluster
+)
+
+# Pass to KnowledgeGraph
+knowledge_graph = await KnowledgeGraph(
+    client=client,
+    embedder=embedder,
+    chunker=chunker,
+    artifact_extractor=artifact_extractor,
+    builder_settings=builder_arguments,
+).build_from_docs(docs)
+```
 ---
 
 ### Knowledge Graph Construction
@@ -203,32 +303,68 @@ The pipeline operates in several stages:
 
 ---
 
-### Prompt tuning
-How to know what's prompt in used
+### Prompt Customization
+
+All RAGU components that use LLMs inherit from `RaguGenerativeModule`, which provides methods to view and update prompts.
+
+#### Viewing Current Prompts
+
 ```python
+from ragu import LocalSearchEngine
+
 search_engine = LocalSearchEngine(
     client,
     knowledge_graph,
     embedder
 )
 
-print(search_engine.get_prompts())
-#
-# {'local_search': PromptTemplate(template='\n**Goal**\nAnswer the query by summarizing relevant information from the context and, if necessary, well-known facts.\n\n**Instructions**\n1. If you do not know the correct answer, explicitly state that.\n2. Do not include unsupported information.\n\nQuery: {{ query }}\nContext: {{ context }}\n\nProvide the answer in the following language: {{ language }}\nReturn the result as valid JSON matching the provided schema.\n', schema=<class 'ragu.common.prompts.default_models.DefaultResponseModel'>, description='Prompt for generating a local context-based search response.')}
-#
+# Get all prompts used by the search engine
+all_prompts = search_engine.get_prompts()
+print(all_prompts)
+# Returns: {'local_search': RAGUInstruction(...)}
 
-# or, if you know prompt name
-print(search_engine.get_prompt("local_search")
+# Get a specific prompt
+local_search_prompt = search_engine.get_prompt("local_search")
+print(local_search_prompt.messages.to_str())
+# Shows the actual prompt content (all conversation as single text)
+
+print(local_search_prompt.pydantic_model)
+# Shows the response pydantic model 
 ```
 
-You can update prompt using .update_prompt method
+#### Updating Prompts
+
+You can customize prompts by creating a new `RAGUInstruction` with your own messages:
 
 ```python
-from ragu.common.prompts import PromptTemplate
+from textwrap import dedent
 
-search_engine.update_prompt("prompt_name", PromptTemplate(template=..., schema=...))
+from ragu.common.prompts.prompt_storage import RAGUInstruction
+from ragu.common.prompts.messages import ChatMessages, UserMessage, SystemMessage
+from ragu.common.prompts.default_models import DefaultResponseModel
+
+# Create custom prompt instruction
+custom_instruction = RAGUInstruction(
+    messages=ChatMessages.from_messages([
+        SystemMessage(content="You are a helpful assistant specialized in academic research."),
+        UserMessage(content=dedent(
+            """
+            Answer the following query using the provided context.
+            
+            Query: {{ query }}
+            Context: {{ context }}
+            
+            Language: {{ language }}
+            """
+        ))  # Can store any conversation
+    ]),
+    pydantic_model=DefaultResponseModel,  # Your pydantic model (optional)
+    description="Custom local search prompt with academic focus" # Optional
+)
+
+# Update the prompt
+search_engine.update_prompt("local_search", custom_instruction)
 ```
-
 ---
 
 ### Contributors
@@ -250,7 +386,4 @@ search_engine.update_prompt("prompt_name", PromptTemplate(template=..., schema=.
 #### **Small Models Pipeline**
 - Matvey Solovyev
 - Ilya Myznikov
-
-
-
 

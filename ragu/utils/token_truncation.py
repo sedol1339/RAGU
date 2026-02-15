@@ -1,4 +1,4 @@
-from ragu.common import logger
+from ragu.common.logger import logger
 
 
 class TokenTruncation:

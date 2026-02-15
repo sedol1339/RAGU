@@ -27,16 +27,15 @@ jobs:
       - name: Install uv
         run: pip install uv
 
-      - name: Install package from git
+      - name: Install package with test dependencies
         run: |
-          uv pip install --system git+https://github.com/AsphodelRem/RAGU.git
+          uv pip install --system -e ".[test]"
 
       - name: Test import
         run: python -c "import ragu; print(ragu.__version__)"
 
       - name: Run tests
         run: |
-          uv pip install --system pytest
           pytest tests/
 
   mirror:

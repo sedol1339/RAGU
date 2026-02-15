@@ -116,6 +116,17 @@ class NanoVectorDBStorage(BaseVectorStorage):
     async def query_done_callback(self):
         pass
 
+    async def delete(self, ids: List[str]) -> None:
+        """
+        Delete embeddings by their IDs from the vector database.
+
+        :param ids: List of IDs to remove from the vector storage.
+        :type ids: List[str]
+        """
+        if not ids:
+            return
+        self._client.delete(ids)
+
     async def index_done_callback(self) -> None:
         """
         Save the current state of the NanoVectorDB to disk.
