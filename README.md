@@ -2,6 +2,11 @@
 <h1 align="center">RAGU: Retrieval-Augmented Graph Utility</h1>
 
 ---
+
+<p align="center">
+<img src="assets/ragu_image.jpg" alt="RAGU logo" width="600" />
+</p>
+
 <h4 align="center">
   <a href="https://github.com/AsphodelRem/RAGU/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="RAGU is under the MIT license." alt="RAGU"/>
@@ -13,10 +18,6 @@
   <a href="#install">Install</a> |
   <a href="#quickstart">Quickstart</a> 
 </h4>
-
-<p align="center">
-<img src="assets/ragu_image.jpg" alt="RAGU logo" width="600" />
-</p>
 
 ---
 
