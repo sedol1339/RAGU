@@ -105,9 +105,15 @@ class JsonKVStorage(BaseKVStorage):
         self.data = {}
 
     async def index_start_callback(self):
+        """
+        Pre-index hook for interface compatibility.
+        """
         pass
 
     async def query_done_callback(self):
+        """
+        Post-query hook for interface compatibility.
+        """
         pass
 
     async def index_done_callback(self):

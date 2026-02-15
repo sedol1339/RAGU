@@ -163,96 +163,96 @@ async def test_openai_embedder_aclose_swallows_exceptions(monkeypatch):
 
     await embedder.aclose()
 
-
-class _FakeSentenceTransformer:
-    def __init__(self, model_name_or_path: str, **kwargs):
-        self.model_name_or_path = model_name_or_path
-        self.kwargs = kwargs
-        self.encode_calls = []
-
-    def get_sentence_embedding_dimension(self) -> int:
-        return 4
-
-    def encode(self, batch, show_progress_bar: bool = False):
-        self.encode_calls.append((list(batch), show_progress_bar))
-        return np.array(
-            [[float(len(text)), float(len(text) + 1), 1.0, 0.0] for text in batch],
-            dtype=float,
-        )
-
-
-def test_st_embedder_raises_import_error_when_sentence_transformers_missing(monkeypatch):
-    original_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name == "sentence_transformers":
-            raise ImportError("missing package")
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
-
-    with pytest.raises(ImportError, match="sentence-transformers"):
-        STEmbedder(model_name_or_path="fake-model")
-
-
-def test_st_embedder_init_uses_model_dimension_when_dim_not_passed(monkeypatch):
-    fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
-    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
-
-    embedder = STEmbedder(model_name_or_path="fake-model", device="cpu")
-
-    assert embedder.dim == 4
-    assert embedder.model.model_name_or_path == "fake-model"
-    assert embedder.model.kwargs["device"] == "cpu"
-
-
-def test_st_embedder_init_respects_explicit_dim_override(monkeypatch):
-    fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
-    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
-
-    embedder = STEmbedder(model_name_or_path="fake-model", dim=128)
-
-    assert embedder.dim == 128
-
-
-@pytest.mark.asyncio
-async def test_st_embedder_embed_single_string(monkeypatch):
-    fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
-    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
-    embedder = STEmbedder(model_name_or_path="fake-model")
-
-    result = await embedder.embed("hello")
-
-    assert isinstance(result, np.ndarray)
-    assert result.shape == (1, 4)
-    assert embedder.model.encode_calls == [(["hello"], False)]
-
-
-@pytest.mark.asyncio
-async def test_st_embedder_embed_list_uses_batching(monkeypatch):
-    fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
-    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
-    embedder = STEmbedder(model_name_or_path="fake-model")
-
-    texts = ["a", "bb", "ccc", "dddd", "eeeee"]
-    result = await embedder.embed(texts, batch_size=2)
-
-    assert isinstance(result, np.ndarray)
-    assert result.shape == (5, 4)
-    assert len(embedder.model.encode_calls) == 3
-    assert embedder.model.encode_calls[0] == (["a", "bb"], False)
-    assert embedder.model.encode_calls[1] == (["ccc", "dddd"], False)
-    assert embedder.model.encode_calls[2] == (["eeeee"], False)
-
-
-@pytest.mark.asyncio
-async def test_st_embedder_call_delegates_to_embed(monkeypatch):
-    fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
-    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
-    embedder = STEmbedder(model_name_or_path="fake-model")
-
-    result = await embedder("call path")
-
-    assert isinstance(result, np.ndarray)
-    assert result.shape == (1, 4)
-
+#
+# class _FakeSentenceTransformer:
+#     def __init__(self, model_name_or_path: str, **kwargs):
+#         self.model_name_or_path = model_name_or_path
+#         self.kwargs = kwargs
+#         self.encode_calls = []
+#
+#     def get_sentence_embedding_dimension(self) -> int:
+#         return 4
+#
+#     def encode(self, batch, show_progress_bar: bool = False):
+#         self.encode_calls.append((list(batch), show_progress_bar))
+#         return np.array(
+#             [[float(len(text)), float(len(text) + 1), 1.0, 0.0] for text in batch],
+#             dtype=float,
+#         )
+#
+#
+# def test_st_embedder_raises_import_error_when_sentence_transformers_missing(monkeypatch):
+#     original_import = builtins.__import__
+#
+#     def fake_import(name, *args, **kwargs):
+#         if name == "sentence_transformers":
+#             raise ImportError("missing package")
+#         return original_import(name, *args, **kwargs)
+#
+#     monkeypatch.setattr(builtins, "__import__", fake_import)
+#
+#     with pytest.raises(ImportError):
+#         STEmbedder(model_name_or_path="fake-model")
+#
+#
+# def test_st_embedder_init_uses_model_dimension_when_dim_not_passed(monkeypatch):
+#     fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
+#     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+#
+#     embedder = STEmbedder(model_name_or_path="fake-model", device="cpu")
+#
+#     assert embedder.dim == 4
+#     assert embedder.model.model_name_or_path == "fake-model"
+#     assert embedder.model.kwargs["device"] == "cpu"
+#
+#
+# def test_st_embedder_init_respects_explicit_dim_override(monkeypatch):
+#     fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
+#     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+#
+#     embedder = STEmbedder(model_name_or_path="fake-model", dim=128)
+#
+#     assert embedder.dim == 128
+#
+#
+# @pytest.mark.asyncio
+# async def test_st_embedder_embed_single_string(monkeypatch):
+#     fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
+#     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+#     embedder = STEmbedder(model_name_or_path="fake-model")
+#
+#     result = await embedder.embed("hello")
+#
+#     assert isinstance(result, np.ndarray)
+#     assert result.shape == (1, 4)
+#     assert embedder.model.encode_calls == [(["hello"], False)]
+#
+#
+# @pytest.mark.asyncio
+# async def test_st_embedder_embed_list_uses_batching(monkeypatch):
+#     fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
+#     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+#     embedder = STEmbedder(model_name_or_path="fake-model")
+#
+#     texts = ["a", "bb", "ccc", "dddd", "eeeee"]
+#     result = await embedder.embed(texts, batch_size=2)
+#
+#     assert isinstance(result, np.ndarray)
+#     assert result.shape == (5, 4)
+#     assert len(embedder.model.encode_calls) == 3
+#     assert embedder.model.encode_calls[0] == (["a", "bb"], False)
+#     assert embedder.model.encode_calls[1] == (["ccc", "dddd"], False)
+#     assert embedder.model.encode_calls[2] == (["eeeee"], False)
+#
+#
+# @pytest.mark.asyncio
+# async def test_st_embedder_call_delegates_to_embed(monkeypatch):
+#     fake_module = types.SimpleNamespace(SentenceTransformer=_FakeSentenceTransformer)
+#     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+#     embedder = STEmbedder(model_name_or_path="fake-model")
+#
+#     result = await embedder("call path")
+#
+#     assert isinstance(result, np.ndarray)
+#     assert result.shape == (1, 4)
+#

@@ -31,7 +31,14 @@ class BaseLLM(ABC):
             cache_flush_every: int = 100,
     ):
         """
-        Initialize the LLM base client with default usage statistics.
+        Initialize the LLM base client with throttling and cache configuration.
+
+        :param model_name: Default model identifier for requests.
+        :param max_requests_per_minute: Requests-per-minute limit.
+        :param max_requests_per_second: Requests-per-second limit.
+        :param concurrency: Maximum concurrent requests.
+        :param time_period: Time window for RPS limiter (instead of 1 second).
+        :param cache_flush_every: Cache flush/write threshold.
         """
         self.model_name = model_name
         self._sem = asyncio.Semaphore(max(1, concurrency))
@@ -76,6 +83,15 @@ class BaseLLM(ABC):
         model_name: str | None = None,
         **kwargs: Any,
     ) -> str | BaseModel | None:
+        """
+        Execute one provider-specific completion call.
+
+        :param messages: Rendered chat messages.
+        :param response_model: Optional Pydantic model for structured output.
+        :param model_name: Optional model override for this call.
+        :param kwargs: Provider-specific generation parameters.
+        :return: Raw text, parsed model, or ``None`` on failure.
+        """
         ...
 
     async def generate(
@@ -86,6 +102,16 @@ class BaseLLM(ABC):
             progress_bar_desc: str = "Processing",
             **kwargs: Any,
     ) -> List[str | BaseModel | None]:
+        """
+        Generate outputs for multiple conversations.
+
+        :param conversations: List of rendered chat conversations.
+        :param response_model: Optional schema for structured outputs.
+        :param model_name: Optional model override for all requests.
+        :param progress_bar_desc: Progress bar caption.
+        :param kwargs: Provider-specific generation parameters.
+        :return: Results aligned with input order.
+        """
 
         results: List[str | BaseModel | None] = [None] * len(conversations)
         pending: List[PendingRequest] = []

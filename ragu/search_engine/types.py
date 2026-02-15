@@ -6,6 +6,10 @@ from jinja2 import Template
 
 @dataclass
 class LocalSearchResult:
+    """
+    Structured retrieval payload returned by local graph search.
+    """
+
     entities: list=field(default_factory=list)
     relations: list=field(default_factory=list)
     summaries: list=field(default_factory=list)
@@ -43,6 +47,11 @@ class LocalSearchResult:
     )
 
     def __str__(self) -> str:
+        """
+        Render search context into prompt-friendly text.
+
+        :return: Human-readable context string.
+        """
         return self._template.render(
             entities=self.entities,
             relations=self.relations,
@@ -53,6 +62,10 @@ class LocalSearchResult:
 
 @dataclass
 class GlobalSearchResult:
+    """
+    Aggregated global-search insights with relevance ratings.
+    """
+
     insights: list=field(default_factory=list)
 
     _template: Template = Template(dedent(
@@ -64,11 +77,20 @@ class GlobalSearchResult:
     )
 
     def __str__(self) -> str:
+        """
+        Render insights into prompt-friendly text.
+
+        :return: Human-readable insights string.
+        """
         return self._template.render(insights=self.insights)
 
 
 @dataclass
 class NaiveSearchResult:
+    """
+    Retrieval payload for vector-only (naive) search.
+    """
+
     chunks: list=field(default_factory=list)
     scores: list=field(default_factory=list)
     documents_id: list[str]=field(default_factory=list)
@@ -84,6 +106,11 @@ class NaiveSearchResult:
     )
 
     def __str__(self) -> str:
+        """
+        Render retrieved chunks and scores into prompt-friendly text.
+
+        :return: Human-readable chunk listing.
+        """
         return self._template.render(
             chunks=self.chunks,
             scores=self.scores,

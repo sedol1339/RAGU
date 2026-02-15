@@ -6,6 +6,13 @@ from ragu.graph.types import Entity, Relation
 
 
 class RemoveIsolatedNodes(GraphBuilderModule):
+    """
+    Graph-builder module that removes isolated entities.
+
+    Keeps only relations whose endpoints exist in the entity set, then removes
+    entities not connected by any remaining relation.
+    """
+
     def __init__(self):
         super().__init__()
 
@@ -15,6 +22,13 @@ class RemoveIsolatedNodes(GraphBuilderModule):
             relations: List[Relation],
             **kwargs
     ) -> Tuple[List[Entity], List[Relation]]:
+        """
+        Remove dangling relations and entities without edges.
+
+        :param entities: Candidate entities.
+        :param relations: Candidate relations.
+        :return: Filtered entities and relations.
+        """
 
         entity_ids = {e.id for e in entities if e.id}
         relations = [

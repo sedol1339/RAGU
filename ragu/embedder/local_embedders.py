@@ -7,6 +7,9 @@ import numpy as np
 class STEmbedder(BaseEmbedder):
     """
     Embedder that uses Sentence Transformers to compute text embeddings.
+
+    Warning:
+    This embedder currently has limited support and can be unstable. Use OpenAIEmbedder instead.
     """
 
     def __init__(self, model_name_or_path: str, dim: int=None, *args, **kwargs):
@@ -15,6 +18,11 @@ class STEmbedder(BaseEmbedder):
 
         :param model_name_or_path: Path or name of the Sentence Transformer model.
         """
+
+        raise ImportError(
+            "[STEmbedder] Current support is limited and unstable. "
+            "Please, use OpenAIEmbedder for now."
+        )
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError:

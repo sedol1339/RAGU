@@ -38,6 +38,8 @@ class BaseMessage:
     def to_openai(self) -> ChatCompletionMessageParam:
         """
         Convert this message into a typed OpenAI ChatCompletion message.
+
+        :return: OpenAI-compatible message payload.
         """
         if self.role == "system":
             return ChatCompletionSystemMessageParam(
@@ -62,6 +64,8 @@ class BaseMessage:
     def to_str(self) -> str:
         """
         Return a human-readable string representation of the message.
+
+        :return: Serialized message string.
         """
         return f"[{self.role}]: {self.content}"
 
@@ -106,12 +110,17 @@ class ChatMessages:
     def from_messages(cls: Type[T], messages: Sequence[BaseMessage]) -> T:
         """
         Construct a ChatMessages instance from a sequence of messages.
+
+        :param messages: Source message sequence.
+        :return: ChatMessages container.
         """
         return cls(messages=list(messages))
 
     def to_openai(self) -> List[ChatCompletionMessageParam]:
         """
         Convert all messages to OpenAI ChatCompletion message parameters.
+
+        :return: List of OpenAI-compatible message payloads.
         """
         return [m.to_openai() for m in self.messages]
 
@@ -124,6 +133,8 @@ class ChatMessages:
     def to_str(self) -> str:
         """
         Return a readable multi-line string representation of the conversation.
+
+        :return: Multi-line serialized conversation.
         """
         return "\n".join([m.to_str() for m in self.messages])
 
@@ -132,19 +143,10 @@ def render(template_conversation: Union[BaseMessage, ChatMessages], **params: An
     """
     Render Jinja2 templates inside message contents in batch mode.
 
-    Parameters
-    ----------
-    template_conversation:
-        A single message or a ChatMessages instance used as a template.
-    params:
-        A mix of scalar parameters (shared across all prompts) and
-        batch parameters (lists/tuples). All batch parameters must
-        have the same length N.
-
-    Returns
-    -------
-    List[ChatMessages]
-        A list of rendered ChatMessages objects of length N.
+    :param template_conversation: Message or conversation template.
+    :param params: Scalar and batch Jinja context parameters.
+    :return: Rendered conversations (batch size inferred from list/tuple params).
+    :raises ValueError: If batch parameter lengths are inconsistent.
     """
 
     def _is_batch_value(v: Any) -> bool:

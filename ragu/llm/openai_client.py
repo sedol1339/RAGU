@@ -48,6 +48,7 @@ class OpenAIClient(BaseLLM):
         :param instructor_mode: Output parsing mode for `instructor`.
         :param max_requests_per_minute: Limit of requests per minute (RPM).
         :param max_requests_per_second: Limit of requests per second (RPS).
+        :param time_period: Time period for RPS (instead of 1 second).
         :param cache_flush_every: Flush cache to disk every N requests (default 100).
         :param openai_kwargs: Additional keyword arguments passed to AsyncOpenAI.
         """
@@ -80,6 +81,8 @@ class OpenAIClient(BaseLLM):
         """
         Perform a single generation request to the LLM with retry logic.
 
+        :param messages: Rendered chat messages for the request.
+        :param response_model: Optional schema for structured output parsing.
         :param model_name: Override model name for this call (defaults to client model).
         :param kwargs: Additional API call parameters.
         :return: Parsed model output or raw string, or ``None`` if failed.
@@ -104,6 +107,8 @@ class OpenAIClient(BaseLLM):
     async def async_close(self) -> None:
         """
         Close the underlying asynchronous OpenAI client and flush cache.
+
+        Swallows close exceptions to keep shutdown paths non-fatal.
         """
         try:
             await self.cache.close()

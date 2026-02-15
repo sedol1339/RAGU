@@ -111,9 +111,15 @@ class NanoVectorDBStorage(BaseVectorStorage):
         return [{**res, "id": res["__id__"], "distance": res["__metrics__"]} for res in results]
 
     async def index_start_callback(self):
+        """
+        Pre-index hook for interface compatibility.
+        """
         pass
 
     async def query_done_callback(self):
+        """
+        Post-query hook for interface compatibility.
+        """
         pass
 
     async def delete(self, ids: List[str]) -> None:
@@ -135,4 +141,3 @@ class NanoVectorDBStorage(BaseVectorStorage):
         are persisted in the storage file.
         """
         self._client.save()
-
