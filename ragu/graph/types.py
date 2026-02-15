@@ -63,7 +63,7 @@ class Entity:
             )
 
     def __eq__(self, other):
-        return self.id == other.id
+        return self.id == other.id and self.description == other.description
 
 
 @dataclass(slots=True)
@@ -110,11 +110,11 @@ class Relation:
         """
         if not self.id:
             self.id = compute_mdhash_id(
-                content=(self.subject_id + " -> " + self.object_id),
+                content=(self.subject_id + " -> " + self.object_id + self.relation_type),
                 prefix="rel-"
             )
     def __eq__(self, other):
-        return self.id == other.id
+        return self.id == other.id and self.description == other.description
 
 
 @dataclass(slots=True)
@@ -152,7 +152,7 @@ class Community:
         """
         if not self.id:
             self.id = compute_mdhash_id(
-                content=(str(self.level) + " - " + str(self.cluster_id)),
+                content=f"{self.level}:{self.cluster_id}",
                 prefix="com-"
             )
 
@@ -160,7 +160,6 @@ class Community:
         return self.id == other.id
 
 
-# TODO: creates summary ID from community level and cluster ID
 @dataclass(slots=True)
 class CommunitySummary:
     """
