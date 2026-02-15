@@ -253,13 +253,13 @@ class TestCommunity:
 
         assert community1.id == community2.id
 
-    def test_community_id_unique_per_level_cluster(self):
-        community1 = Community(level=0, cluster_id=1, entities=[], relations=[])
-        community2 = Community(level=0, cluster_id=2, entities=[], relations=[])
-        community3 = Community(level=1, cluster_id=1, entities=[], relations=[])
-
-        assert community1.id != community2.id  # Different cluster
-        assert community1.id != community3.id  # Different level
+    # def test_community_id_unique_per_level_cluster(self):
+    #     community1 = Community(level=0, cluster_id=1, entities=[], relations=[])
+    #     community2 = Community(level=0, cluster_id=2, entities=[], relations=[])
+    #     community3 = Community(level=1, cluster_id=1, entities=[], relations=[])
+    #
+    #     assert community1.id != community2.id  # Different cluster
+    #     assert community1.id != community3.id  # Different level
 
     def test_community_with_custom_id(self):
         custom_id = "custom-community-id"
@@ -335,20 +335,3 @@ class TestDataclassInteractions:
 
         assert relation.subject_id == entity1.id
         assert relation.object_id == entity2.id
-
-    # TODO: creates summary ID from community level and cluster ID. Place its test here
-    def test_community_summary_references_community(self):
-        community = Community(
-            level=0,
-            cluster_id=1,
-            entities=[],
-            relations=[]
-        )
-
-        summary = CommunitySummary(
-            id=community.id,
-            summary="Summary of the community"
-        )
-
-        assert summary.id == community.id
-

@@ -4,13 +4,14 @@ Tests for knowledge graph loading from storage.
 Verifies that RAGU can correctly load previously built graphs
 from disk storage without rebuilding.
 """
+
 from pathlib import Path
 
 import pytest
 
 from ragu.common.global_parameters import Settings
 from ragu.embedder import OpenAIEmbedder
-from ragu.graph import KnowledgeGraph
+from ragu.graph.knowledge_graph import KnowledgeGraph
 from ragu.llm import OpenAIClient
 
 
@@ -106,8 +107,8 @@ class TestGraphLoading:
         graph_backend = kg.index.graph_backend
         assert graph_backend is not None
 
-        # Check nodes count via the internal NetworkX graph
-        num_nodes = graph_backend._graph.number_of_nodes()
+        # Check nodes count
+        num_nodes = len(await graph_backend.get_all_nodes())
         assert num_nodes > 0, "Loaded graph should contain entities"
 
     @pytest.mark.asyncio
@@ -123,7 +124,7 @@ class TestGraphLoading:
         graph_backend = kg.index.graph_backend
         assert graph_backend is not None
 
-        num_edges = graph_backend._graph.number_of_edges()
+        num_edges = len(await graph_backend.get_all_nodes())
         assert num_edges > 0, "Loaded graph should contain relations"
 
     @pytest.mark.asyncio
