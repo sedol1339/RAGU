@@ -101,9 +101,12 @@ class ArtifactsExtractorLLM(BaseArtifactExtractor):
                 progress_bar_desc="Validation of extracted artifacts",
             )
 
-        result_list = [x for x in result_list if x is not None and not isinstance(x, Exception)]
-
         for artifacts, chunk in zip(result_list, chunks):
+            if artifacts is None or isinstance(artifacts, Exception):
+                continue
+            if not hasattr(artifacts, "model_dump"):
+                continue
+
             current_chunk_entities: List[Entity] = []
 
             # Parse entities
