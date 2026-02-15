@@ -85,6 +85,9 @@ class VLLMReranker(BaseReranker):
             raise
 
     async def aclose(self):
+        """
+        Close underlying HTTP client.
+        """
         try:
             await self.client.aclose()
         except Exception:

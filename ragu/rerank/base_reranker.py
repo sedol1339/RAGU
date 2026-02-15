@@ -8,12 +8,27 @@ from ragu.utils.ragu_utils import AsyncRunner
 
 
 class BaseReranker(ABC):
+    """
+    Base interface for document rerankers.
+
+    Subclasses score candidate documents relative to a query and return
+    sorted (index, score) pairs.
+    """
+
     _sem: asyncio.Semaphore | None = None
     _rps = None  # AsyncLimiter
     _rpm = None  # AsyncLimiter
 
     @abstractmethod
     async def rerank(self, x: str, others: List[str], **kwargs) -> List[Tuple[int, float]]:
+        """
+        Score and rank candidate texts for a single query.
+
+        :param x: Query text.
+        :param others: Candidate documents.
+        :param kwargs: Provider-specific scoring parameters.
+        :return: Ranked ``(index, score)`` tuples in descending order.
+        """
         ...
 
     async def batch_rerank(
@@ -54,5 +69,10 @@ class BaseReranker(ABC):
                     pbar.update(1)
                 return results
 
-    async def __call__(self, x: str, others: List[str], **kwargs):
+    async def __call__(self, x: str, others: List[str], **kwargs) -> List[Tuple[int, float]]:
+        """
+        Call alias for ``rerank``.
+
+        :return: List of rerank results for each query.
+        """
         return await self.rerank(x, others, **kwargs)
