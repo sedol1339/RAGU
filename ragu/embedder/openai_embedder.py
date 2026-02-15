@@ -26,6 +26,10 @@ class PendingEmbeddingRequest:
 
 
 class OpenAIEmbedder(BaseEmbedder):
+    """
+    Async embedder for OpenAI-compatible embedding APIs.
+    """
+
     def __init__(
             self,
             model_name: str,
@@ -43,6 +47,22 @@ class OpenAIEmbedder(BaseEmbedder):
             *args,
             **kwargs
     ):
+        """
+        Initialize OpenAI embedder client and runtime settings.
+
+        :param model_name: Embedding model name.
+        :param base_url: OpenAI-compatible API base URL.
+        :param api_token: API key/token.
+        :param dim: Embedding dimensionality.
+        :param concurrency: Maximum concurrent embedding requests.
+        :param request_timeout: HTTP request timeout in seconds.
+        :param max_requests_per_second: Requests-per-second limit.
+        :param max_requests_per_minute: Requests-per-minute limit.
+        :param time_period: Time period for the RPS limiter.
+        :param use_cache: Whether to cache embeddings locally.
+        :param cache_path: Optional custom cache path.
+        :param cache_flush_every: Cache flush frequency in writes.
+        """
         super().__init__(dim=dim)
 
         self.model_name = model_name
@@ -62,6 +82,12 @@ class OpenAIEmbedder(BaseEmbedder):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
     async def _one_call(self, text: str) -> List[float] | None:
+        """
+        Execute one embedding request with retry policy.
+
+        :param text: Input text.
+        :return: Embedding vector or ``None`` when unavailable.
+        """
         try:
             response = await self.client.embeddings.create(
                 model=self.model_name,
@@ -77,6 +103,13 @@ class OpenAIEmbedder(BaseEmbedder):
             texts: Union[str, List[str]],
             progress_bar_desc=None
     ) -> List[List[float] | None]:
+        """
+        Compute embeddings for one text or a list of texts.
+
+        :param texts: Input text or list of texts.
+        :param progress_bar_desc: Optional progress bar description.
+        :return: Embeddings aligned with input order; failed items are ``None``.
+        """
         if isinstance(texts, str):
             texts = [texts]
 
@@ -121,6 +154,9 @@ class OpenAIEmbedder(BaseEmbedder):
         return results
 
     async def aclose(self):
+        """
+        Close embedder resources and flush cache.
+        """
         try:
             if self._cache is not None:
                 await self._cache.close()
