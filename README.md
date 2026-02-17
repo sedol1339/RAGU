@@ -117,7 +117,7 @@ async def main():
     )
 
     # Configure builder settings
-    builder_settings = BuilderSettings(
+    builder_settings = BuilderArguments(
         use_llm_summarization=True,
         vectorize_chunks=True,
     )
