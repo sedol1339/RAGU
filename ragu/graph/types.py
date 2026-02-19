@@ -58,7 +58,7 @@ class Entity:
         """
         if not self.id:
             self.id = compute_mdhash_id(
-                content=(self.entity_name + " - " + self.entity_type),
+                (self.entity_name + " - " + self.entity_type),
                 prefix="ent-"
             )
 
@@ -110,7 +110,7 @@ class Relation:
         """
         if not self.id:
             self.id = compute_mdhash_id(
-                content=(self.subject_id + " -> " + self.object_id + self.relation_type),
+                (self.subject_id + " -> " + self.object_id + self.relation_type),
                 prefix="rel-"
             )
     def __eq__(self, other):
@@ -152,7 +152,7 @@ class Community:
         """
         if not self.id:
             self.id = compute_mdhash_id(
-                content=f"{self.level}:{self.cluster_id}",
+                f"{self.level}:{self.cluster_id}",
                 prefix="com-"
             )
 
