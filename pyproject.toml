@@ -42,4 +42,11 @@ test = [
 [tool.setuptools.packages.find]
 include = ["ragu*"]
 
+[tool.coverage.run]
+omit = [
+    "tests/*",
+]
 
+[tool.coverage.report]
+skip_empty = true
+ignore_errors = true  # torch generates files in /tmp/ dir that crash `coverage report -m` command

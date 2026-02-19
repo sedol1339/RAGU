@@ -23,6 +23,7 @@ class PendingRequest:
     messages: ChatMessages
     cache_key: str
 
+_schema_cache: dict[type[BaseModel], str] = {}
 
 def make_llm_cache_key(
     content: str,
@@ -44,17 +45,17 @@ def make_llm_cache_key(
         key_parts.append(f"[model]: {model_name}")
 
     if schema is not None:
-        schema_name = schema.__name__
-        field_names = sorted(schema.model_fields.keys())
-        key_parts.append(f"[schema]: {schema_name}({','.join(field_names)})")
+        if not (schema_str := _schema_cache.get(schema, None)):
+            schema_str = json.dumps(schema.model_json_schema(), sort_keys=True)
+            _schema_cache[schema] = schema_str
+        key_parts.append(schema_str)
 
     if kwargs:
         sorted_kwargs = sorted(kwargs.items())
         kwargs_str = json.dumps(sorted_kwargs, sort_keys=True)
         key_parts.append(f"[kwargs]: {kwargs_str}")
 
-    combined = "\n".join(key_parts)
-    return compute_mdhash_id(combined, prefix="llm-cache-")
+    return compute_mdhash_id(*key_parts, prefix="llm-cache-")
 
 def make_embedding_cache_key(text: str, model_name: str) -> str:
     """

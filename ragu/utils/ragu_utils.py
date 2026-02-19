@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Collection
 from hashlib import md5
 from pathlib import Path
 from typing import Callable, Any
@@ -30,8 +31,18 @@ class AsyncRunner:
                         self.progress_bar.update(1)
 
 
-def compute_mdhash_id(content, prefix: str = ""):
-    return prefix + md5(content.encode()).hexdigest()
+def compute_mdhash_id(*args: str, prefix: str = '', **kwargs: str) -> str:
+    """A unique string hash for the given combination of arguments.
+    Invariant to kwargs order.
+    """
+    string = ''
+    for x in args:
+        assert isinstance(x, str)
+        string += '\0' + x
+    for key, x in sorted(kwargs.items(), key=lambda item: item[0]):
+        assert isinstance(x, str)
+        string += '\0' + key + '\1' + x
+    return prefix + md5(string.encode()).hexdigest()
 
 
 def always_get_an_event_loop() -> asyncio.AbstractEventLoop:
@@ -47,7 +58,7 @@ def always_get_an_event_loop() -> asyncio.AbstractEventLoop:
         return new_loop
 
 
-def read_text_from_files(directory: str, file_extensions=None) -> List[str]:
+def read_text_from_files(directory: str | Path, file_extensions: Collection[str] | None = None) -> List[str]:
     texts = []
     directory = Path(directory)
     for file_path in directory.rglob('*'):
