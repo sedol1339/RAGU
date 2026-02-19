@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Collection
 from hashlib import md5
 from pathlib import Path
 from typing import Callable, Any
@@ -47,7 +48,7 @@ def always_get_an_event_loop() -> asyncio.AbstractEventLoop:
         return new_loop
 
 
-def read_text_from_files(directory: str, file_extensions=None) -> List[str]:
+def read_text_from_files(directory: str | Path, file_extensions: Collection[str] | None = None) -> List[str]:
     texts = []
     directory = Path(directory)
     for file_path in directory.rglob('*'):
