@@ -117,8 +117,7 @@ class KnowledgeGraph:
             await self.index.insert_entities(entities)
             await self.index.insert_relations(relations)
 
-        should_vectorize = self.vectorize_chunks or is_vector_only
-        await self.index.upsert_chunks(chunks, vectorize=should_vectorize)
+        await self.index.upsert_chunks(chunks)
 
         if should_store_communities:
             await self.index.upsert_communities(communities)
@@ -174,15 +173,14 @@ class KnowledgeGraph:
         entities = await self.index.graph_backend.get_nodes([entity_id])
         return entities[0] if entities else None
 
-    async def delete_entity(self, entity_id: str, cascade: bool = True) -> "KnowledgeGraph":
+    async def delete_entity(self, entity_id: str) -> "KnowledgeGraph":
         """
         Delete an entity from the knowledge graph.
 
         :param entity_id: ID of the entity to delete.
-        :param cascade: Whether to also delete connected relations (default: True).
         :return: Self for method chaining.
         """
-        await self.index.delete_entities([entity_id], cascade=cascade)
+        await self.index.delete_entities([entity_id])
         return self
 
     async def update_entity(self, entity_id: str, new_entity: Entity) -> "KnowledgeGraph":
