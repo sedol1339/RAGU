@@ -84,6 +84,7 @@ class LocalSearchEngine(BaseEngine):
             top_k=top_k,
         )
         entities = await self.knowledge_graph.index.get_entities([hit.id for hit in embedding_hits])
+        entities = [e for e in entities if e is not None]
 
         relations = await _find_most_related_edges_from_entities(entities, self.knowledge_graph)
         relations = [relation for relation in relations if relation is not None]
