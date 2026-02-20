@@ -7,6 +7,13 @@ from ragu.graph.types import Entity, Relation
 from ragu.search_engine.local_search import LocalSearchEngine
 from ragu.search_engine.search_functional import _find_most_related_edges_from_entities
 from ragu.search_engine.types import LocalSearchResult
+from ragu.storage.types import EmbeddingHit
+
+
+def _make_embedder_mock():
+    mock = AsyncMock()
+    mock.return_value = [[0.0] * 3]
+    return mock
 
 
 @pytest.mark.asyncio
@@ -14,15 +21,15 @@ async def test_local_search_collects_entities_relations_chunks_and_summaries(rea
     entity_ids = kg_fixture_ids["entity_ids"]
     real_kg.index.entity_vector_db.query = AsyncMock(
         return_value=[
-            {"__id__": entity_ids[0]},
-            {"__id__": entity_ids[1]},
-            {"__id__": "ent-missing"},
+            EmbeddingHit(id=entity_ids[0], distance=0.9),
+            EmbeddingHit(id=entity_ids[1], distance=0.8),
+            EmbeddingHit(id="ent-missing", distance=0.7),
         ]
     )
     engine = LocalSearchEngine(
         client=SimpleNamespace(generate=AsyncMock()),
         knowledge_graph=real_kg,
-        embedder=object(),
+        embedder=_make_embedder_mock(),
     )
 
     result = await engine.a_search("query", top_k=3)
@@ -38,7 +45,7 @@ async def test_local_search_collects_entities_relations_chunks_and_summaries(rea
 @pytest.mark.asyncio
 async def test_local_query_returns_raw_result_when_no_response_attr(monkeypatch, real_kg):
     client = SimpleNamespace(generate=AsyncMock(return_value=["raw-result"]))
-    engine = LocalSearchEngine(client=client, knowledge_graph=real_kg, embedder=object())
+    engine = LocalSearchEngine(client=client, knowledge_graph=real_kg, embedder=_make_embedder_mock())
     engine.truncation = lambda s: s
     engine.a_search = AsyncMock(return_value=LocalSearchResult())
 
