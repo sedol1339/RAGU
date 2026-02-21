@@ -70,7 +70,11 @@ class OpenAIClient(BaseLLM):
 
         self._client = instructor.from_openai(client=base_client, mode=instructor_mode)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        reraise=True
+    )
     async def complete(
         self,
         messages: ChatMessages,
@@ -85,24 +89,28 @@ class OpenAIClient(BaseLLM):
         :param response_model: Optional schema for structured output parsing.
         :param model_name: Override model name for this call (defaults to client model).
         :param kwargs: Additional API call parameters.
-        :return: Parsed model output or raw string, or ``None`` if failed.
+        :return: Parsed model output or raw string.
         """
 
         try:
             self.statistics["requests"] += 1
-            parsed: BaseModel = await self._client.chat.completions.create(
+            parsed = await self._client.chat.completions.create(
                 model=model_name or self.model_name,
                 messages=messages.to_openai(),
                 response_model=response_model,
                 **kwargs,
             )
             self.statistics["success"] += 1
+
+            if response_model is None:
+                return parsed.choices[0].message.content
+
             return parsed
 
         except Exception as e:
             logger.error(f"[RemoteLLM] request failed after retries: {e}", e, exc_info=True)
             self.statistics["fail"] += 1
-            raise
+            raise e
 
     async def async_close(self) -> None:
         """
