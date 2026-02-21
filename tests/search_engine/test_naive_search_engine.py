@@ -60,7 +60,7 @@ async def test_naive_search_empty_returns_empty_result(real_kg):
 
 @pytest.mark.asyncio
 async def test_naive_query_uses_llm_response(monkeypatch):
-    client = SimpleNamespace(generate=AsyncMock(return_value=[SimpleNamespace(response="naive-answer")]))
+    client = SimpleNamespace(generate=AsyncMock(return_value=["naive-answer"]))
     kg = SimpleNamespace(index=SimpleNamespace(chunk_vector_db=SimpleNamespace(query=AsyncMock(return_value=[]))))
     engine = NaiveSearchEngine(client=client, knowledge_graph=kg, embedder=_make_embedder_mock())
     engine.truncation = lambda s: s
