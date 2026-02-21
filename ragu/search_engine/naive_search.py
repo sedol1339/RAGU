@@ -1,6 +1,6 @@
 from typing import Optional, List
 
-from openai import embeddings
+from pydantic import BaseModel
 
 from ragu.chunker.types import Chunk
 from ragu.common.global_parameters import Settings
@@ -135,14 +135,15 @@ class NaiveSearchEngine(BaseEngine):
             documents_id=documents_id,
         )
 
-    async def a_query(self, query: str, top_k: int = 20, rerank_top_k: Optional[int] = None) -> str:
+    async def a_query(self, query: str, top_k: int = 20, rerank_top_k: Optional[int] = None) -> str | BaseModel:
         """
         Execute a retrieval-augmented query using naive vector search.
 
         :param query: User query in natural language.
         :param top_k: Number of chunks to search initially (default: 20).
         :param rerank_top_k: Number of chunks to use after reranking (default: None = use all).
-        :return: Generated response text from the language model.
+        :return: Generated answer as a string or Pydantic model when a response schema is set.
+        :rtype: str | BaseModel
         """
         context: NaiveSearchResult = await self.a_search(query, top_k, rerank_top_k)
         truncated_context: str = self.truncation(str(context))
@@ -162,4 +163,4 @@ class NaiveSearchEngine(BaseEngine):
             response_model=instruction.pydantic_model,
         )
 
-        return result[0].response if hasattr(result[0], "response") else result[0]
+        return result[0]
