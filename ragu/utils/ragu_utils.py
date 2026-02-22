@@ -1,14 +1,18 @@
 import asyncio
-from collections.abc import Collection
+from collections.abc import Awaitable, Collection, MutableMapping
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
+import functools
 from hashlib import md5
 from pathlib import Path
-from typing import Callable, Any
+from typing import Callable, Any, TypeVar, cast
 from typing import List
 
+from diskcache import Index # pyright: ignore[reportMissingTypeStubs]
 import numpy as np
 import numpy.typing as npt
-
 from aiolimiter import AsyncLimiter
+
+from ragu.common.logger import logger
 
 
 FLOATS = npt.NDArray[np.floating[Any]]
@@ -16,6 +20,37 @@ FLOATS = npt.NDArray[np.floating[Any]]
 
 INTS = npt.NDArray[np.integer[Any]]
 """A typization for numpy array of integers"""
+
+_dish_caches: dict[str, Index] = {}
+
+def get_disk_cache(dir: str | Path) -> MutableMapping[str, Any]:
+    """Get or create a DiskCache by a directory name.
+    Cache is shared between multiple `get_disk_cache` calls.
+    """
+    path = str(Path(dir).resolve())
+    if (cache := _dish_caches.get(path, None)):
+        return cache
+    _dish_caches[path] = cache = Index(path)
+    return cache
+
+
+T_fn = TypeVar('T_fn', bound=Callable[..., Awaitable[Any]])
+
+def attach_async_contexts(
+    func: T_fn,
+    *contexts: AbstractAsyncContextManager[Any],
+) -> T_fn:
+    """Wraps the `func` into the given async contexts."""
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        logger.debug('attach_async_contexts: entering context!')
+        async with AsyncExitStack() as stack:
+            for mgr in contexts:
+                await stack.enter_async_context(mgr)
+            print('attach_async_contexts: entered context!')
+            return await func(*args, **kwargs)
+            
+    return cast(T_fn, wrapper)
 
 
 class AsyncRunner:
