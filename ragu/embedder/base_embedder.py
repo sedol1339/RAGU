@@ -1,5 +1,4 @@
 from abc import abstractmethod, ABC
-from typing import List
 
 from ragu.utils.ragu_utils import FLOATS
 
@@ -18,7 +17,7 @@ class BaseEmbedder(ABC):
         self.dim = dim
 
     @abstractmethod
-    async def embed(self, texts: List[str]) -> list[List[float]] | FLOATS:
+    async def embed(self, texts: list[str]) -> list[list[float]] | FLOATS:
         """
         Computes embeddings for a list of text inputs.
 
@@ -27,7 +26,7 @@ class BaseEmbedder(ABC):
         """
         ...
 
-    async def embed_single(self, text: str) -> List[float] | FLOATS:
+    async def embed_single(self, text: str) -> list[float] | FLOATS:
         """
         Computes embeddings for a single text input.
         """
