@@ -3,11 +3,13 @@ from collections.abc import Awaitable, Collection, MutableMapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 import functools
 from hashlib import md5
+import logging
 from pathlib import Path
 from typing import Callable, Any, TypeVar, cast
 from typing import List
 
 from diskcache import Index # pyright: ignore[reportMissingTypeStubs]
+import loguru
 import numpy as np
 import numpy.typing as npt
 from aiolimiter import AsyncLimiter
@@ -43,14 +45,39 @@ def attach_async_contexts(
     """Wraps the `func` into the given async contexts."""
     @functools.wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        logger.debug('attach_async_contexts: entering context!')
+        logger.debug('attach_async_contexts: entering context...')
         async with AsyncExitStack() as stack:
             for mgr in contexts:
                 await stack.enter_async_context(mgr)
-            print('attach_async_contexts: entered context!')
+            logger.debug('attach_async_contexts: entered context!')
             return await func(*args, **kwargs)
             
     return cast(T_fn, wrapper)
+
+
+class LoguruAdapter(logging.Logger):
+    # is neeed where some tool requires a logging.Logger, but we have loguru
+    def __init__(self, name: str):
+        super().__init__(name)
+        
+    def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False): # type: ignore
+        # We override the internal _log method to intercept standard logging calls
+        # and redirect them to loguru.
+        
+        # Map integer levels to loguru level names/values
+        # Note: stacklevel=2 usually helps valid source file reporting
+        loguru_opts = loguru.logger.opt(depth=2, exception=exc_info) # type: ignore
+        
+        # Handle standard logging's printf style formatting (%s) 
+        # vs Loguru's mechanism
+        try:
+             # Standard logging expands args eagerly usually, 
+             # but here we might just pass the message formatted
+             formatted_msg = msg % args if args else msg # type: ignore
+        except TypeError:
+             formatted_msg = msg # Fallback # type: ignore
+
+        loguru_opts.log(level, formatted_msg) # type: ignore
 
 
 class AsyncRunner:
