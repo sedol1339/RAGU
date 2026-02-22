@@ -1,28 +1,15 @@
 import asyncio
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Union
 
 from aiolimiter import AsyncLimiter
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm.asyncio import tqdm_asyncio
 
-from ragu.common.batch_generator import BatchGenerator
-from ragu.common.cache import EmbeddingCache, get_cache, make_embedding_cache_key
+from ragu.common.cache import get_cache, make_embedding_cache_key
 from ragu.common.logger import logger
 from ragu.embedder.base_embedder import BaseEmbedder
-from ragu.utils.ragu_utils import FLOATS, AsyncRunner
-
-
-@dataclass(frozen=True, slots=True)
-class PendingEmbeddingRequest:
-    """
-    Represents an embedding request pending generation (not found in cache).
-    """
-    index: int
-    text: str
-    cache_key: str
+from ragu.utils.ragu_utils import FLOATS
 
 
 class OpenAIEmbedder(BaseEmbedder):
@@ -64,7 +51,7 @@ class OpenAIEmbedder(BaseEmbedder):
         self._cache = get_cache(cache_dir) if cache_dir else None
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-    async def _embed_via_api(self, text: str) -> List[float] | None:
+    async def _embed_via_api(self, text: str) -> list[float] | None:
         """
         Execute one embedding request with retry policy.
 
