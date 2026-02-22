@@ -82,7 +82,7 @@ class BaseLLM(ABC):
         response_model: Type[BaseModel] | None = None,
         model_name: str | None = None,
         **kwargs: Any,
-    ) -> str | BaseModel | None:
+    ) -> str | BaseModel:
         """
         Execute one provider-specific completion call.
 
@@ -90,7 +90,7 @@ class BaseLLM(ABC):
         :param response_model: Optional Pydantic model for structured output.
         :param model_name: Optional model override for this call.
         :param kwargs: Provider-specific generation parameters.
-        :return: Raw text, parsed model, or ``None`` on failure.
+        :return: Raw text, parsed model.
         """
         ...
 
@@ -101,7 +101,7 @@ class BaseLLM(ABC):
             model_name: str | None = None,
             progress_bar_desc: str = "Processing",
             **kwargs: Any,
-    ) -> List[str | BaseModel | None]:
+    ) -> List[str | BaseModel]:
         """
         Generate outputs for multiple conversations.
 

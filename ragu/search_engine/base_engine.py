@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 
+from pydantic import BaseModel
+
 from ragu.common.base import RaguGenerativeModule
 from ragu.common.prompts.default_models import GlobalSearchContextModel
 from ragu.llm.base_llm import BaseLLM
@@ -35,21 +37,21 @@ class BaseEngine(RaguGenerativeModule, ABC):
         pass
 
     @abstractmethod
-    async def a_query(self, query: str) -> str:
+    async def a_query(self, query: str) -> str | BaseModel:
         """
-        Execute full query flow and return answer text.
+        Execute full query flow and return answer.
 
         :param query: Input query string.
-        :return: Generated answer text.
+        :return: Generated answer as a string or Pydantic model when a response schema is set.
         """
         pass
 
-    async def query(self, query: str) -> str:
+    async def query(self, query: str) -> str | BaseModel:
         """
         Synchronous wrapper for ``a_query``.
 
         :param query: Input query string.
-        :return: Generated answer text.
+        :return: Generated answer as a string or Pydantic model when a response schema is set.
         """
         loop = always_get_an_event_loop()
         return loop.run_until_complete(

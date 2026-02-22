@@ -33,6 +33,7 @@ from ragu.storage.base_storage import (
 )
 from ragu.storage.graph_storage_adapters.networkx_adapter import NetworkXStorage
 from ragu.storage.kv_storage_adapters.json_storage import JsonKVStorage
+from ragu.storage.types import Embedding
 from ragu.storage.vdb_storage_adapters.nano_vdb import NanoVectorDBStorage
 
 
@@ -71,13 +72,13 @@ class Index:
 
     def __init__(
             self,
-            embedder: BaseEmbedder,
+            embedder: Optional[BaseEmbedder],
             arguments: StorageArguments,
     ):
         """
         Initialize storage backends and in-memory reverse indexes.
 
-        :param embedder: Embedder used by vector storages.
+        :param embedder: Embedder used for text-to-vector conversion.
         :param arguments: Configuration for storage backend implementations.
         """
         Settings.init_storage_folder()
@@ -130,10 +131,33 @@ class Index:
         self.community_summary_kv_storage = arguments.kv_storage_type(**summary_kv_kwargs)
         self.community_kv_storage = arguments.kv_storage_type(**community_kv_kwargs)
 
+        embedding_dim_from_embedder = embedder.dim
+
+        dimensions_from_kwargs = [
+            storage_kwargs.get("embedding_dim") for storage_kwargs in [
+                entity_vdb_kwargs,
+                relation_vdb_kwargs,
+                chunk_vdb_kwargs
+            ] if storage_kwargs.get("embedding_dim")]
+
+        number_of_dimensions = len(dimensions_from_kwargs)
+        if number_of_dimensions > 1:
+            raise ValueError(f"Dimension missmatch in vdb kwargs: {dimensions_from_kwargs}")
+        if number_of_dimensions == 1:
+            if dimensions_from_kwargs[0] != embedding_dim_from_embedder:
+                raise ValueError(f"Dimension mismatch in vdb kwargs and embedder setup: "
+                                 f"{dimensions_from_kwargs[0]} and {embedding_dim_from_embedder}")
+
+        resolved_dim = embedding_dim_from_embedder
+
+        entity_vdb_kwargs["embedding_dim"] = resolved_dim
+        relation_vdb_kwargs["embedding_dim"] = resolved_dim
+        chunk_vdb_kwargs["embedding_dim"] = resolved_dim
+
         # Vector storages
-        self.entity_vector_db = arguments.vdb_storage_type(embedder=embedder, **entity_vdb_kwargs)
-        self.relation_vector_db = arguments.vdb_storage_type(embedder=embedder, **relation_vdb_kwargs)
-        self.chunk_vector_db = arguments.vdb_storage_type(embedder=embedder, **chunk_vdb_kwargs)
+        self.entity_vector_db = arguments.vdb_storage_type(**entity_vdb_kwargs)
+        self.relation_vector_db = arguments.vdb_storage_type(**relation_vdb_kwargs)
+        self.chunk_vector_db = arguments.vdb_storage_type(**chunk_vdb_kwargs)
 
         # Graph storage
         self.graph_backend = arguments.graph_backend_storage(
@@ -182,7 +206,8 @@ class Index:
             }
             for e in entities_to_insert
         }
-        await self.entity_vector_db.upsert(vdb_data)
+        embeddings = await self._build_embeddings(vdb_data)
+        await self.entity_vector_db.upsert(embeddings)
 
         await self.graph_backend.index_done_callback()
         await self.entity_vector_db.index_done_callback()
@@ -227,7 +252,8 @@ class Index:
             }
             for e in entities_to_update
         }
-        await self.entity_vector_db.upsert(vdb_data)
+        embeddings = await self._build_embeddings(vdb_data)
+        await self.entity_vector_db.upsert(embeddings)
 
         await self.graph_backend.index_done_callback()
         await self.entity_vector_db.index_done_callback()
@@ -296,7 +322,8 @@ class Index:
         }
         if existing_relation_ids:
             await self.relation_vector_db.delete(existing_relation_ids)
-        await self.relation_vector_db.upsert(vdb_data)
+        embeddings = await self._build_embeddings(vdb_data)
+        await self.relation_vector_db.upsert(embeddings)
 
         await self.graph_backend.index_done_callback()
         await self.relation_vector_db.index_done_callback()
@@ -360,7 +387,8 @@ class Index:
             for r in relations_to_update
         }
         await self.relation_vector_db.delete(relation_ids)
-        await self.relation_vector_db.upsert(vdb_data)
+        embeddings = await self._build_embeddings(vdb_data)
+        await self.relation_vector_db.upsert(embeddings)
 
         await self.graph_backend.index_done_callback()
         await self.relation_vector_db.index_done_callback()
@@ -370,12 +398,11 @@ class Index:
         )
         return self
 
-    async def upsert_chunks(self, chunks: List[Chunk], vectorize: bool = False) -> "Index":
+    async def upsert_chunks(self, chunks: List[Chunk]) -> "Index":
         """
         Insert or update chunks into KV storage (and optionally vector DB).
 
         :param chunks: Chunks to upsert.
-        :param vectorize: Whether to generate and store embeddings.
         :return: Self for method chaining.
         """
         if not chunks:
@@ -390,14 +417,13 @@ class Index:
 
         await self.chunks_kv_storage.upsert(kv_data)
 
-        # Optionally store in vector DB
-        if vectorize:
-            vdb_data = {
-                c.id: {"content": c.content, "doc_id": c.doc_id}
-                for c in chunks
-            }
-            await self.chunk_vector_db.upsert(vdb_data)
-            await self.chunk_vector_db.index_done_callback()
+        vdb_data = {
+            c.id: {"content": c.content, "doc_id": c.doc_id}
+            for c in chunks
+        }
+        embeddings = await self._build_embeddings(vdb_data)
+        await self.chunk_vector_db.upsert(embeddings)
+        await self.chunk_vector_db.index_done_callback()
 
         await self.chunks_kv_storage.index_done_callback()
         return self
@@ -739,8 +765,10 @@ class Index:
         :param top_k: Number of results to return.
         :return: Matching entities.
         """
-        results = await self.entity_vector_db.query(query, top_k=top_k)
-        entity_ids = [r["id"] for r in results]
+        query_vector = await self.embedder(query)
+
+        results = await self.entity_vector_db.query(Embedding(vector=query_vector[0]), top_k=top_k)
+        entity_ids = [r.id for r in results]
         entities = await self.get_entities(entity_ids)
         return [e for e in entities if e is not None]
 
@@ -752,13 +780,50 @@ class Index:
         :param top_k: Number of results to return.
         :return: Matching relations.
         """
-        results = await self.relation_vector_db.query(query, top_k=top_k)
+        query_vector = await self.embedder(query)
+
+        results = await self.relation_vector_db.query(Embedding(vector=query_vector[0]), top_k=top_k)
         edge_specs: List[EdgeSpec] = [
-            (r["subject"], r["object"], r["id"])
+            (
+                str(r.metadata.get("subject")),
+                str(r.metadata.get("object")),
+                r.id,
+            )
             for r in results
+            if r.metadata.get("subject") and r.metadata.get("object")
         ]
+        if not edge_specs:
+            return []
         relations = await self.get_relations(edge_specs)
         return [r for r in relations if r is not None]
+
+    async def _build_embeddings(self, payloads: Dict[str, Dict[str, Any]]) -> List[Embedding]:
+        """
+        Convert text payloads to vector embeddings.
+
+        :param payloads: Mapping ``id -> payload`` where payload contains ``content``.
+        :return: Embeddings ready for vector storage upsert.
+        """
+        if not self.embedder:
+            raise ValueError("Embedder is required for vector operations.")
+        if not payloads:
+            return []
+
+        payload_items = list(payloads.items())
+        contents: List[str] = [str(payload.get("content", "")) for _, payload in payload_items]
+        vectors = await self.embedder(contents)
+
+        embeddings: List[Embedding] = []
+        for (record_id, payload), vector in zip(payload_items, vectors):
+            metadata = {key: value for key, value in payload.items() if key != "content"}
+            embeddings.append(
+                Embedding(
+                    id=record_id,
+                    vector=vector,
+                    metadata=metadata,
+                )
+            )
+        return embeddings
 
     async def _validate_relation_endpoints_exist(self, relations: List[Relation]) -> None:
         """

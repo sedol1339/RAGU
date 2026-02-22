@@ -1,6 +1,8 @@
 # Partially based on https://github.com/gusye1234/nano-graphrag/blob/main/nano_graphrag/
 from typing import List
 
+from pydantic import BaseModel
+
 from ragu.common.global_parameters import Settings
 from ragu.embedder.base_embedder import BaseEmbedder
 from ragu.graph.knowledge_graph import KnowledgeGraph
@@ -84,6 +86,7 @@ class LocalSearchEngine(BaseEngine):
             top_k=top_k,
         )
         entities = await self.knowledge_graph.index.get_entities([hit.id for hit in embedding_hits])
+        entities = [e for e in entities if e is not None]
 
         relations = await _find_most_related_edges_from_entities(entities, self.knowledge_graph)
         relations = [relation for relation in relations if relation is not None]
@@ -103,13 +106,13 @@ class LocalSearchEngine(BaseEngine):
             documents_id=documents_id,
         )
 
-    async def a_query(self, query: str, top_k: int = 20) -> str:
+    async def a_query(self, query: str, top_k: int = 20) -> str | BaseModel:
         """
         Execute a local RAG query.
 
         :param query: User query in natural language.
         :param top_k: Number of entities to retrieve into context.
-        :return: Final model response (string or extracted field if returned model-like).
+        :return: Generated answer as a string or Pydantic model when a response schema is set.
         """
         context: LocalSearchResult = await self.a_search(query, top_k)
         truncated_context: str = self.truncation(str(context))
@@ -127,4 +130,4 @@ class LocalSearchEngine(BaseEngine):
             response_model=instruction.pydantic_model,
         )
 
-        return result[0].response if hasattr(result[0], "response") else result[0]
+        return result[0]

@@ -46,7 +46,9 @@ async def _find_most_related_text_unit_from_entities(
     neighbor_ids = list(set([relation.object_id for relation in relations]))
     neighbors = await knowledge_graph.index.get_entities(neighbor_ids)
 
-    all_one_hop_text_units_lookup = { neighbor.id : neighbor.source_chunk_id for neighbor in neighbors }
+    all_one_hop_text_units_lookup = {
+        neighbor.id : neighbor.source_chunk_id for neighbor in neighbors if neighbor is not None
+    }
 
     all_text_units_lookup = {}
     for index, (this_text_units, this_edges) in enumerate(zip(chunks_id, edges)):

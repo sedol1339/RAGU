@@ -108,7 +108,7 @@ class GlobalSearchEngine(BaseEngine, RaguGenerativeModule):
 
         return [r.model_dump() for r in meta_responses if r]
 
-    async def a_query(self, query: str) -> str:
+    async def a_query(self, query: str) -> str | BaseModel:
         """
         Execute a full global retrieval-augmented generation query.
 
@@ -116,7 +116,7 @@ class GlobalSearchEngine(BaseEngine, RaguGenerativeModule):
         - Generates a final global answer.
 
         :param query: The natural language query from the user.
-        :return: The generated global response text.
+        :return: Generated answer as a string or Pydantic model when a response schema is set.
         """
         context = await self.a_search(query)
         truncated_context: str = self.truncation(str(context))
@@ -136,4 +136,4 @@ class GlobalSearchEngine(BaseEngine, RaguGenerativeModule):
             response_model=instruction.pydantic_model,
         )
 
-        return result[0].response if hasattr(result[0], "response") else result[0]
+        return result[0]

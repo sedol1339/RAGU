@@ -30,7 +30,7 @@ async def test_global_search_filters_and_sorts_by_rating(monkeypatch, real_kg):
 
 @pytest.mark.asyncio
 async def test_global_query_returns_llm_response(monkeypatch, real_kg):
-    client = SimpleNamespace(generate=AsyncMock(return_value=[SimpleNamespace(response="global-answer")]))
+    client = SimpleNamespace(generate=AsyncMock(return_value=["global-answer"]))
     engine = GlobalSearchEngine(client=client, knowledge_graph=real_kg)
     engine.truncation = lambda s: s
     engine.a_search = AsyncMock(return_value=GlobalSearchResult(insights=[{"response": "x", "rating": "1"}]))
