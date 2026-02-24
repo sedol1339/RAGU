@@ -1,18 +1,176 @@
 docs/agents
 └── ragu
-    ├── Class BuilderArguments.md
-    ├── Class Env.md
-    ├── Class InMemoryGraphBuilder.md
-    ├── Class KnowledgeGraph.md
-    ├── Class StorageArguments.md
+    ├── chunker
+    │   ├── base_chunker
+    │   │   └── Class BaseChunker.md
+    │   ├── chunkers
+    │   │   ├── Class SemanticTextChunker.md
+    │   │   ├── Class SimpleChunker.md
+    │   │   └── Class SmartSemanticChunker.md
+    │   └── types
+    │       └── Class Chunk.md
     ├── common
+    │   ├── base
+    │   │   └── Class RaguGenerativeModule.md
+    │   ├── batch_generator
+    │   │   ├── Class BatchGenerator.md
+    │   │   └── Variable T.md
+    │   ├── cache
+    │   │   ├── Class EmbeddingCache.md
+    │   │   ├── Class PendingRequest.md
+    │   │   ├── Class TextCache.md
+    │   │   ├── Function get_cache.md
+    │   │   ├── Function make_embedding_cache_key.md
+    │   │   └── Function make_llm_cache_key.md
+    │   ├── env
+    │   │   └── Class Env.md
+    │   ├── global_parameters
+    │   │   ├── Class GlobalSettings.md
+    │   │   ├── Variable DEFAULT_FILENAMES.md
+    │   │   └── Variable Settings.md
     │   └── prompts
-    │       ├── Class AIMessage.md
-    │       ├── Class ChatMessages.md
-    │       ├── Class SystemMessage.md
-    │       ├── Class UserMessage.md
-    │       └── Variable DEFAULT_PROMPT_TEMPLATES.md
-    ├── Variable Settings.md
-    └── Variable __version__.md
+    │       ├── default_models
+    │       │   ├── Class ArtifactsModel.md
+    │       │   ├── Class ClusterSummarizationModel.md
+    │       │   ├── Class CommunityFindingModel.md
+    │       │   ├── Class CommunityReportModel.md
+    │       │   ├── Class DefaultResponseModel.md
+    │       │   ├── Class EntitiesExtractionModel.md
+    │       │   ├── Class EntityDescriptionModel.md
+    │       │   ├── Class EntityModel.md
+    │       │   ├── Class GlobalSearchContextModel.md
+    │       │   ├── Class GlobalSearchResponseModel.md
+    │       │   ├── Class QueryPlan.md
+    │       │   ├── Class RelationDescriptionModel.md
+    │       │   ├── Class RelationModel.md
+    │       │   ├── Class RelationsExtractionModel.md
+    │       │   ├── Class RewriteQuery.md
+    │       │   └── Class SubQuery.md
+    │       ├── default_templates
+    │       │   ├── Variable DEFAULT_ARTIFACTS_EXTRACTOR_PROMPT.md
+    │       │   ├── Variable DEFAULT_ARTIFACTS_VALIDATOR_PROMPT.md
+    │       │   ├── Variable DEFAULT_CLUSTER_SUMMARIZER_PROMPT.md
+    │       │   ├── Variable DEFAULT_COMMUNITY_REPORT_PROMPT.md
+    │       │   ├── Variable DEFAULT_ENTITY_SUMMARIZER_PROMPT.md
+    │       │   ├── Variable DEFAULT_GLOBAL_SEARCH_CONTEXT_PROMPT.md
+    │       │   ├── Variable DEFAULT_GLOBAL_SEARCH_PROMPT.md
+    │       │   ├── Variable DEFAULT_QUERY_DECOMPOSITION_PROMPT.md
+    │       │   ├── Variable DEFAULT_QUERY_REWRITE_PROMPT.md
+    │       │   ├── Variable DEFAULT_RAGU_LM_ENTITY_DESCRIPTION_PROMPT.md
+    │       │   ├── Variable DEFAULT_RAGU_LM_ENTITY_EXTRACTION_PROMPT.md
+    │       │   ├── Variable DEFAULT_RAGU_LM_ENTITY_NORMALIZATION_PROMPT.md
+    │       │   ├── Variable DEFAULT_RAGU_LM_RELATION_DESCRIPTION_PROMPT.md
+    │       │   ├── Variable DEFAULT_RAGU_LM_SYSTEM_PROMPT.md
+    │       │   ├── Variable DEFAULT_RELATIONSHIP_SUMMARIZER_PROMPT.md
+    │       │   └── Variable DEFAULT_RESPONSE_ONLY_PROMPT.md
+    │       ├── messages
+    │       │   ├── Class AIMessage.md
+    │       │   ├── Class BaseMessage.md
+    │       │   ├── Class ChatMessages.md
+    │       │   ├── Class SystemMessage.md
+    │       │   ├── Class UserMessage.md
+    │       │   ├── Function render.md
+    │       │   ├── Variable Role.md
+    │       │   └── Variable T.md
+    │       └── prompt_storage
+    │           ├── Class RAGUInstruction.md
+    │           └── Variable DEFAULT_PROMPT_TEMPLATES.md
+    ├── graph
+    │   ├── artifacts_summarizer
+    │   │   ├── Class EntitySummarizer.md
+    │   │   └── Class RelationSummarizer.md
+    │   ├── builder_modules
+    │   │   └── Class RemoveIsolatedNodes.md
+    │   ├── community_summarizer
+    │   │   └── Class CommunitySummarizer.md
+    │   ├── graph_builder_pipeline
+    │   │   ├── Class BuilderArguments.md
+    │   │   ├── Class GraphBuilderModule.md
+    │   │   └── Class InMemoryGraphBuilder.md
+    │   ├── knowledge_graph
+    │   │   └── Class KnowledgeGraph.md
+    │   └── types
+    │       ├── Class Community.md
+    │       ├── Class CommunitySummary.md
+    │       ├── Class EntityEmbedding.md
+    │       ├── Class Entity.md
+    │       ├── Class RelationEmbedding.md
+    │       └── Class Relation.md
+    ├── llm
+    │   └── llm
+    │       ├── Class CachedLLM.md
+    │       ├── Class CachedOpenAI.md
+    │       └── Variable T.md
+    ├── rerank
+    │   ├── api_rerankers
+    │   │   └── Class VLLMReranker.md
+    │   ├── base_reranker
+    │   │   └── Class BaseReranker.md
+    │   └── local_rerankers
+    │       └── Class CrossEncoderReranker.md
+    ├── search_engine
+    │   ├── base_engine
+    │   │   └── Class BaseEngine.md
+    │   ├── global_search
+    │   │   └── Class GlobalSearchEngine.md
+    │   ├── local_search
+    │   │   └── Class LocalSearchEngine.md
+    │   ├── naive_search
+    │   │   └── Class NaiveSearchEngine.md
+    │   ├── query_plan
+    │   │   └── Class QueryPlanEngine.md
+    │   └── types
+    │       ├── Class GlobalSearchResult.md
+    │       ├── Class LocalSearchResult.md
+    │       └── Class NaiveSearchResult.md
+    ├── storage
+    │   ├── base_storage
+    │   │   ├── Class BaseGraphStorage.md
+    │   │   ├── Class BaseKVStorage.md
+    │   │   ├── Class BaseStorage.md
+    │   │   ├── Class BaseVectorStorage.md
+    │   │   ├── Variable EdgeSpec.md
+    │   │   └── Variable T.md
+    │   ├── graph_storage_adapters
+    │   │   └── networkx_adapter
+    │   │       └── Class NetworkXStorage.md
+    │   ├── index
+    │   │   ├── Class Index.md
+    │   │   └── Class StorageArguments.md
+    │   ├── kv_storage_adapters
+    │   │   └── json_storage
+    │   │       └── Class JsonKVStorage.md
+    │   ├── types
+    │   │   ├── Class EmbeddingHit.md
+    │   │   └── Class Embedding.md
+    │   └── vdb_storage_adapters
+    │       └── nano_vdb
+    │           └── Class NanoVectorDBStorage.md
+    ├── triplet
+    │   ├── base_artifact_extractor
+    │   │   └── Class BaseArtifactExtractor.md
+    │   ├── llm_artifact_extractor
+    │   │   └── Class ArtifactsExtractorLLM.md
+    │   ├── ragu_lm_artifact_extractor
+    │   │   ├── Class ChunkContext.md
+    │   │   └── Class RaguLmArtifactExtractor.md
+    │   └── types
+    │       ├── Variable DEFAULT_ENTITY_TYPES.md
+    │       ├── Variable NEREL_ENTITY_TYPES.md
+    │       └── Variable NEREL_RELATION_TYPES.md
+    └── utils
+        ├── ragu_utils
+        │   ├── Class AsyncRunner.md
+        │   ├── Class LoguruAdapter.md
+        │   ├── Function always_get_an_event_loop.md
+        │   ├── Function attach_async_contexts.md
+        │   ├── Function compute_mdhash_id.md
+        │   ├── Function get_disk_cache.md
+        │   ├── Function read_text_from_files.md
+        │   ├── Variable FLOATS.md
+        │   ├── Variable INTS.md
+        │   └── Variable T_fn.md
+        └── token_truncation
+            └── Class TokenTruncation.md
 
-4 directories, 12 files
+55 directories, 119 files
